@@ -1,0 +1,6 @@
+services:
+  - type: web
+    name: stock-dashboard
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn stock_analysis_webapp:app
