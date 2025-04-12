@@ -552,11 +552,20 @@ def api_stocks():
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/refresh', methods=['POST'])
+@app.route('/api/refresh', methods=['POST'])
 def api_refresh():
     """API endpoint to force refresh stock data"""
     try:
-        data = analyze_all_stocks()
-        return jsonify({"success": True, "message": "Data refreshed", "data": data})
+        # Use a try/except block specifically for catching HTML responses
+        try:
+            data = analyze_all_stocks()
+            # Make sure we're actually returning JSON data
+            if not isinstance(data, dict):
+                raise ValueError("Analysis did not return valid data")
+            return jsonify({"success": True, "message": "Data refreshed", "data": data})
+        except Exception as inner_e:
+            logger.error(f"Analysis error during refresh: {str(inner_e)}")
+            return jsonify({"success": False, "error": f"Analysis error: {str(inner_e)}"}), 500
     except Exception as e:
         logger.error(f"Refresh error: {str(e)}")
         return jsonify({"success": False, "error": str(e)}), 500
