@@ -1,7 +1,7 @@
 """
 WSGI entry point for Gunicorn
 """
-from simple_stock_webapp import app, analyze_all_stocks
+from stock_analysis_webapp import app, analyze_all_stocks
 import threading
 import time
 import logging
