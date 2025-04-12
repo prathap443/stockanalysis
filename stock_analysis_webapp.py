@@ -91,7 +91,7 @@ html_template = """
 </head>
 <body>
     <div class="container my-4">
-        <h1 class="mb-2">Stock Market Dashboard</h1>
+        <h1 class="mb-2">Stock Market Dashboard - Prathap's Analysis</h1>
         <p class="text-muted">Comprehensive analysis of top 20 stocks based on performance, news, and technical indicators</p>
         <p id="lastUpdated" class="last-updated text-muted mb-3">Last updated: Loading...</p>
         
