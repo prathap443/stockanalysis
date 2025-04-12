@@ -1,19 +1,37 @@
+"""
+Enhanced Stock Analysis Web Application
+- Improved error handling
+- Retry logic for API calls
+- Better file access management
+- More reliable data fetching
+"""
+
 from flask import Flask, render_template, jsonify, send_from_directory
 import requests
 import json
 import os
 import time
 from datetime import datetime, timedelta
+import logging
 from bs4 import BeautifulSoup
+import random
 
+# Setup logging
+logging.basicConfig(level=logging.INFO, 
+                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+# Initialize Flask app
 app = Flask(__name__)
 
-# Create necessary directories
-os.makedirs('templates', exist_ok=True)
-os.makedirs('data', exist_ok=True)
+# Ensure directories exist
+def ensure_directories():
+    """Create necessary directories if they don't exist"""
+    for directory in ['templates', 'data', 'static']:
+        os.makedirs(directory, exist_ok=True)
 
 # HTML template for dashboard
-html = """
+html_template = """
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -27,6 +45,22 @@ html = """
         .buy { background-color: #d1f8d1; }
         .sell { background-color: #ffd1d1; }
         .hold { background-color: #ffefd1; }
+        .loading-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(255, 255, 255, 0.8);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+        }
+        .loading-overlay.show {
+            display: flex;
+        }
     </style>
 </head>
 <body>
@@ -71,11 +105,20 @@ html = """
             <p class="mt-2">Loading stock data...</p>
         </div>
         
+        <div id="error-message" class="alert alert-danger" style="display: none;"></div>
+        
         <div id="stocksList" class="row row-cols-1 row-cols-md-3 g-4" style="display: none;"></div>
         
         <div class="mt-5 text-center text-muted small">
             <p>Data for informational purposes only. Not financial advice.</p>
         </div>
+    </div>
+    
+    <div class="loading-overlay" id="refreshOverlay">
+        <div class="spinner-border text-primary mb-3" role="status">
+            <span class="visually-hidden">Loading...</span>
+        </div>
+        <p>Refreshing data... This may take a minute...</p>
     </div>
     
     <script>
@@ -87,26 +130,57 @@ html = """
         const buyCount = document.getElementById('buyCount');
         const holdCount = document.getElementById('holdCount');
         const sellCount = document.getElementById('sellCount');
+        const errorMessage = document.getElementById('error-message');
+        const refreshOverlay = document.getElementById('refreshOverlay');
         
         // Load data on page load
         document.addEventListener('DOMContentLoaded', fetchStocks);
         
         // Refresh button
-        refreshBtn.addEventListener('click', fetchStocks);
+        refreshBtn.addEventListener('click', function() {
+            refreshOverlay.classList.add('show');
+            fetch('/api/refresh', {
+                method: 'POST'
+            })
+            .then(response => response.json())
+            .then(data => {
+                refreshOverlay.classList.remove('show');
+                if (data.success) {
+                    fetchStocks();
+                } else {
+                    showError("Failed to refresh data: " + (data.error || "Unknown error"));
+                }
+            })
+            .catch(error => {
+                refreshOverlay.classList.remove('show');
+                showError("Error refreshing data: " + error);
+            });
+        });
         
         function fetchStocks() {
             loading.style.display = 'block';
             stocksList.style.display = 'none';
+            errorMessage.style.display = 'none';
             
             fetch('/api/stocks')
                 .then(response => response.json())
                 .then(data => {
+                    if (data.error) {
+                        showError(data.error);
+                        return;
+                    }
                     displayStocks(data);
                 })
                 .catch(error => {
                     console.error('Error fetching stocks:', error);
-                    loading.innerHTML = '<div class="alert alert-danger">Error loading data. Please try again.</div>';
+                    showError("Error loading data: " + error);
                 });
+        }
+        
+        function showError(message) {
+            loading.style.display = 'none';
+            errorMessage.textContent = message;
+            errorMessage.style.display = 'block';
         }
         
         function displayStocks(data) {
@@ -175,22 +249,31 @@ html = """
 </html>
 """
 
-# Write HTML template to file
-with open('templates/index.html', 'w') as f:
-    f.write(html)
-
 # Default list of stocks to analyze if trending stocks can't be fetched
 DEFAULT_STOCKS = ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "TSLA", "NVDA", "JPM", "V", "WMT"]
 
+def retry_with_backoff(func, retries=5, backoff_in_seconds=1):
+    """Retry a function with exponential backoff"""
+    x = 0
+    while True:
+        try:
+            return func()
+        except Exception as e:
+            if x == retries:
+                raise e
+            sleep_time = backoff_in_seconds * (2 ** x) + random.uniform(0, 1)
+            time.sleep(sleep_time)
+            x += 1
+
 def get_trending_stocks():
-    """Get trending stocks from Yahoo Finance or return default list"""
-    try:
+    """Get trending stocks from Yahoo Finance or return default list with retry logic"""
+    def _get_stocks():
         url = "https://finance.yahoo.com/trending-tickers"
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
         }
         
-        response = requests.get(url, headers=headers, timeout=10)
+        response = requests.get(url, headers=headers, timeout=15)
         
         if response.status_code == 200:
             soup = BeautifulSoup(response.text, "html.parser")
@@ -205,38 +288,49 @@ def get_trending_stocks():
             
             if trending:
                 return trending[:10]
-    except:
-        pass
         
-    print("Using default stock list")
-    return DEFAULT_STOCKS
+        # If we reach here, something went wrong
+        raise Exception("Failed to parse trending stocks")
+    
+    try:
+        return retry_with_backoff(_get_stocks)
+    except Exception as e:
+        logger.error(f"Error fetching trending stocks (even with retries): {str(e)}")
+        return DEFAULT_STOCKS
 
 def get_stock_info(symbol):
-    """Get basic stock info and current price"""
-    try:
+    """Get basic stock info and current price with retry logic"""
+    def _get_info():
         url = f"https://finance.yahoo.com/quote/{symbol}"
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
         }
         
-        response = requests.get(url, headers=headers, timeout=10)
-        soup = BeautifulSoup(response.text, "html.parser")
+        response = requests.get(url, headers=headers, timeout=15)
         
-        # Get company name
-        name_element = soup.find('h1')
-        name = name_element.text if name_element else symbol
+        if response.status_code == 200:
+            soup = BeautifulSoup(response.text, "html.parser")
+            
+            # Get company name
+            name_element = soup.find('h1')
+            name = name_element.text if name_element else symbol
+            
+            # Get current price
+            price_element = soup.find('fin-streamer', {'data-field': 'regularMarketPrice'})
+            price = float(price_element['value']) if price_element and 'value' in price_element.attrs else None
+            
+            return {
+                "symbol": symbol,
+                "name": name,
+                "current_price": price
+            }
         
-        # Get current price
-        price_element = soup.find('fin-streamer', {'data-field': 'regularMarketPrice'})
-        price = float(price_element['value']) if price_element and 'value' in price_element.attrs else None
-        
-        return {
-            "symbol": symbol,
-            "name": name,
-            "current_price": price
-        }
+        raise Exception(f"Failed to get stock info for {symbol}")
+    
+    try:
+        return retry_with_backoff(_get_info)
     except Exception as e:
-        print(f"Error getting info for {symbol}: {str(e)}")
+        logger.error(f"Error getting info for {symbol} (even with retries): {str(e)}")
         return {
             "symbol": symbol,
             "name": symbol,
@@ -244,8 +338,8 @@ def get_stock_info(symbol):
         }
 
 def get_historical_data(symbol, days=14):
-    """Get historical price data for analysis"""
-    try:
+    """Get historical price data for analysis with retry logic"""
+    def _get_data():
         end_date = datetime.now()
         start_date = end_date - timedelta(days=days)
         
@@ -259,11 +353,11 @@ def get_historical_data(symbol, days=14):
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
         }
         
-        response = requests.get(url, headers=headers, timeout=10)
+        response = requests.get(url, headers=headers, timeout=15)
         data = response.json()
         
         if "chart" not in data or "result" not in data["chart"] or not data["chart"]["result"]:
-            return {"error": f"No data returned for {symbol}"}
+            raise Exception(f"No data returned for {symbol}")
         
         result = data["chart"]["result"][0]
         
@@ -275,7 +369,7 @@ def get_historical_data(symbol, days=14):
         valid_data = [(t, c) for t, c in zip(timestamps, close_prices) if c is not None]
         
         if not valid_data:
-            return {"error": f"No valid price data for {symbol}"}
+            raise Exception(f"No valid price data for {symbol}")
         
         timestamps, close_prices = zip(*valid_data)
         
@@ -294,8 +388,11 @@ def get_historical_data(symbol, days=14):
             "current_price": end_price,
             "percent_change_2w": percent_change
         }
+    
+    try:
+        return retry_with_backoff(_get_data)
     except Exception as e:
-        print(f"Error getting history for {symbol}: {str(e)}")
+        logger.error(f"Error getting history for {symbol} (even with retries): {str(e)}")
         return {
             "symbol": symbol,
             "error": str(e),
@@ -355,8 +452,22 @@ def analyze_stock(symbol):
     }
 
 def analyze_all_stocks():
-    """Analyze all trending stocks"""
-    print("Starting stock analysis...")
+    """Analyze all trending stocks with better error handling"""
+    logger.info("Starting stock analysis...")
+    ensure_directories()
+    
+    # First check if we can fetch from existing data file for comparison
+    existing_recommendations = {}
+    try:
+        if os.path.exists('data/stock_analysis.json'):
+            with open('data/stock_analysis.json', 'r') as f:
+                existing_data = json.load(f)
+                for stock in existing_data.get('stocks', []):
+                    if 'symbol' in stock and 'recommendation' in stock:
+                        existing_recommendations[stock['symbol']] = stock['recommendation']
+    except Exception as e:
+        logger.warning(f"Error reading existing data: {str(e)}")
+    
     trending_symbols = get_trending_stocks()
     
     results = []
@@ -364,14 +475,19 @@ def analyze_all_stocks():
     
     for symbol in trending_symbols:
         try:
-            print(f"Analyzing {symbol}...")
+            logger.info(f"Analyzing {symbol}...")
             analysis = analyze_stock(symbol)
+            
+            # Keep track of recommendation changes
+            if symbol in existing_recommendations and existing_recommendations[symbol] != analysis.get('recommendation'):
+                analysis['previous_recommendation'] = existing_recommendations[symbol]
+                
             recommendations[analysis.get("recommendation", "UNKNOWN")] += 1
             results.append(analysis)
             # Small delay to avoid rate limiting
-            time.sleep(1)
+            time.sleep(random.uniform(1.0, 2.0))
         except Exception as e:
-            print(f"Error analyzing {symbol}: {str(e)}")
+            logger.error(f"Error analyzing {symbol}: {str(e)}")
             results.append({
                 "symbol": symbol,
                 "recommendation": "UNKNOWN",
@@ -386,55 +502,96 @@ def analyze_all_stocks():
         "last_updated": timestamp
     }
     
-    with open('data/stock_analysis.json', 'w') as f:
-        json.dump(data, f, indent=2)
+    try:
+        with open('data/stock_analysis.json', 'w') as f:
+            json.dump(data, f, indent=2)
+    except Exception as e:
+        logger.error(f"Error saving analysis to file: {str(e)}")
+        # If we can't save to file, return the data anyway
+        return data
     
-    print(f"Analysis complete. Analyzed {len(results)} stocks.")
+    logger.info(f"Analysis complete. Analyzed {len(results)} stocks.")
     return data
+
+# Make sure the template exists
+def ensure_template():
+    """Make sure index.html exists in templates directory"""
+    ensure_directories()
+    template_path = os.path.join('templates', 'index.html')
+    with open(template_path, 'w') as f:
+        f.write(html_template)
 
 @app.route('/')
 def index():
+    """Serve the main dashboard page"""
+    ensure_template()
     return render_template('index.html')
 
 @app.route('/api/stocks')
 def api_stocks():
+    """API endpoint to get stock data"""
     try:
         # Try to read from cached file first
         try:
-            with open('data/stock_analysis.json', 'r') as f:
-                data = json.load(f)
-                # Check if data is recent (less than 30 minutes old)
-                last_updated = datetime.strptime(data['last_updated'], "%Y-%m-%d %H:%M:%S")
-                age = datetime.now() - last_updated
-                
-                if age.total_seconds() < 1800:  # 30 minutes
-                    return jsonify(data)
-        except:
-            pass
+            if os.path.exists('data/stock_analysis.json'):
+                with open('data/stock_analysis.json', 'r') as f:
+                    data = json.load(f)
+                    # Check if data is recent (less than 30 minutes old)
+                    last_updated = datetime.strptime(data['last_updated'], "%Y-%m-%d %H:%M:%S")
+                    age = datetime.now() - last_updated
+                    
+                    if age.total_seconds() < 1800:  # 30 minutes
+                        return jsonify(data)
+        except Exception as e:
+            logger.error(f"Error reading cached data: {str(e)}")
         
         # No recent data, run analysis
         return jsonify(analyze_all_stocks())
     except Exception as e:
-        print(f"API error: {str(e)}")
+        logger.error(f"API error: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/refresh', methods=['POST'])
 def api_refresh():
+    """API endpoint to force refresh stock data"""
     try:
         data = analyze_all_stocks()
         return jsonify({"success": True, "message": "Data refreshed", "data": data})
     except Exception as e:
-        print(f"Refresh error: {str(e)}")
+        logger.error(f"Refresh error: {str(e)}")
         return jsonify({"success": False, "error": str(e)}), 500
 
+# Add a background task to auto-refresh the data periodically
+def refresh_data_periodically():
+    """Background task to refresh stock data every hour"""
+    while True:
+        try:
+            logger.info("Auto-refreshing stock data...")
+            analyze_all_stocks()
+            logger.info("Auto-refresh complete.")
+        except Exception as e:
+            logger.error(f"Error in auto-refresh: {str(e)}")
+        
+        # Wait one hour before refreshing again
+        time.sleep(3600)  # 1 hour in seconds
+
 if __name__ == "__main__":
+    # Ensure all necessary files and directories exist
+    ensure_directories()
+    ensure_template()
+    
     # Initial data load if no existing data
     if not os.path.exists('data/stock_analysis.json'):
         try:
             analyze_all_stocks()
         except Exception as e:
-            print(f"Initial analysis error: {str(e)}")
+            logger.error(f"Initial analysis error: {str(e)}")
+    
+    # Start data refresh thread
+    import threading
+    refresh_thread = threading.Thread(target=refresh_data_periodically, daemon=True)
+    refresh_thread.start()
     
     # Start the web server
-    print("Starting web server on http://localhost:5000")
+    logger.info("Starting web server on http://localhost:5000")
     app.run(host='0.0.0.0', port=5000, debug=True)
