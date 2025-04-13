@@ -1,7 +1,7 @@
 """
 WSGI entry point for Gunicorn
 """
-from stock_analysis_webapp import app, analyze_all_stocks
+from stock_analysis_webapp import app, analyze_all_stocks  # Import the Flask app instance
 import threading
 import time
 import logging
@@ -18,8 +18,9 @@ os.makedirs('templates', exist_ok=True)
 
 # Try to load initial data
 try:
-    analyze_all_stocks()
-    logger.info("Initial stock analysis completed")
+    if not os.path.exists('data/stock_analysis.json'):
+        analyze_all_stocks()
+        logger.info("Initial stock analysis completed")
 except Exception as e:
     logger.error(f"Initial analysis error: {str(e)}")
 
@@ -37,10 +38,10 @@ def refresh_data_periodically():
         except Exception as e:
             logger.error(f"Error in auto-refresh: {str(e)}")
 
-# Start background refresh thread
-refresh_thread = threading.Thread(target=refresh_data_periodically, daemon=True)
-refresh_thread.start()
+# Start background refresh thread if not running in a test environment
+if os.environ.get('FLASK_ENV') != 'testing':
+    refresh_thread = threading.Thread(target=refresh_data_periodically, daemon=True)
+    refresh_thread.start()
 
 # This is what Gunicorn imports
-if __name__ == "__main__":
-    app.run()
+# No need to call app.run() here as Gunicorn will handle that
