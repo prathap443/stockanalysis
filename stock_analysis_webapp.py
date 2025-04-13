@@ -749,3 +749,4 @@ def analyze_stock(symbol):
                 "volume_analysis": "N/A",
                 "trend": "N/A"
             }
+        }
