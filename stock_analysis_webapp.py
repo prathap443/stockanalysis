@@ -611,7 +611,94 @@ def get_news_sentiment(symbol):
         logger.error(f"Error getting news for {symbol}: {str(e)}")
         return None
 
-# Add this at the end of your stock_analysis_webapp.py file
+# Add this function to your code (place it between get_news_sentiment and analyze_all_stocks)
+def analyze_stock(symbol):
+    """Analyze individual stock to generate recommendation"""
+    logger.info(f"Starting analysis for {symbol}...")
+    
+    try:
+        # Get basic stock info
+        stock_info = get_stock_info(symbol)
+        # Get historical data (last 14 days)
+        historical_data = get_historical_data(symbol)
+        # Get news sentiment
+        news = get_news_sentiment(symbol)
+        
+        # Extract key metrics
+        current_price = historical_data.get("current_price")
+        percent_change = historical_data.get("percent_change_2w", 0)
+        volatility = historical_data.get("volatility", 0)
+        rsi = historical_data.get("technical_indicators", {}).get("rsi", "N/A")
+        macd = historical_data.get("technical_indicators", {}).get("macd", "N/A")
+        
+        # Initialize recommendation logic
+        recommendation = "HOLD"
+        reason = []
+        
+        # RSI-based logic
+        if "Overbought" in rsi:
+            reason.append("RSI indicates overbought conditions")
+            recommendation = "SELL"
+        elif "Oversold" in rsi:
+            reason.append("RSI indicates oversold conditions")
+            recommendation = "BUY"
+        
+        # MACD-based logic
+        if "Bearish" in macd:
+            reason.append("MACD shows bearish trend")
+            recommendation = "SELL"
+        elif "Bullish" in macd:
+            reason.append("MACD shows bullish trend")
+            recommendation = "BUY"
+        
+        # Price change momentum
+        if percent_change > 5:
+            reason.append("Strong positive momentum (2-week change +%.1f%%)" % percent_change)
+            recommendation = "BUY"
+        elif percent_change < -5:
+            reason.append("Negative momentum (2-week change %.1f%%)" % percent_change)
+            recommendation = "SELL"
+        
+        # News sentiment influence
+        if news:
+            if "Positive" in news:
+                reason.append("Positive news sentiment")
+                if recommendation == "SELL": recommendation = "HOLD"
+            elif "Negative" in news:
+                reason.append("Negative news sentiment")
+                if recommendation == "BUY": recommendation = "HOLD"
+        
+        # Volatility check
+        if volatility > 5:
+            reason.append("High volatility (%.1f%%)" % volatility)
+            if recommendation == "BUY": recommendation = "HOLD"
+        
+        # Compile analysis results
+        return {
+            "symbol": symbol,
+            "name": stock_info.get("name", symbol),
+            "current_price": current_price,
+            "percent_change_2w": percent_change,
+            "recommendation": recommendation,
+            "reason": " ".join(reason) if reason else "No significant indicators",
+            "technical_indicators": historical_data.get("technical_indicators", {}),
+            "news_sentiment": news
+        }
+        
+    except Exception as e:
+        logger.error(f"Error in analyze_stock for {symbol}: {str(e)}")
+        return {
+            "symbol": symbol,
+            "name": symbol,
+            "recommendation": "HOLD",
+            "reason": "Analysis unavailable. Maintain current position.",
+            "technical_indicators": {
+                "rsi": "N/A",
+                "macd": "N/A",
+                "volume_analysis": "N/A",
+                "trend": "N/A"
+            }
+        }
 
 def analyze_all_stocks():
     """Analyze all 20 stocks with improved error handling"""
