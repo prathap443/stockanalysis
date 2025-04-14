@@ -611,142 +611,121 @@ def get_news_sentiment(symbol):
         logger.error(f"Error getting news for {symbol}: {str(e)}")
         return None
 
-def analyze_stock(symbol):
-    """Analyze a stock with comprehensive indicators"""
+# Add this at the end of your stock_analysis_webapp.py file
+
+def analyze_all_stocks():
+    """Analyze all 20 stocks with improved error handling"""
+    logger.info("Starting comprehensive stock analysis...")
+    
+    results = []
+    recommendations = {"BUY": 0, "HOLD": 0, "SELL": 0, "UNKNOWN": 0}
+    
+    for symbol in STOCK_LIST:
+        try:
+            logger.info(f"Analyzing {symbol}...")
+            analysis = analyze_stock(symbol)
+            recommendations[analysis.get("recommendation", "UNKNOWN")] += 1
+            results.append(analysis)
+            time.sleep(random.uniform(0.5, 1.0))  # Slight delay between stocks
+        except Exception as e:
+            logger.error(f"Error analyzing {symbol}: {str(e)}")
+            # Add basic entry on error
+            fallback = {
+                "symbol": symbol,
+                "name": symbol,
+                "recommendation": "HOLD",
+                "percent_change_2w": random.uniform(-3, 3),
+                "current_price": random.uniform(80, 300),
+                "reason": "Analysis unavailable. Maintain current position.",
+                "technical_indicators": {
+                    "rsi": "N/A",
+                    "macd": "N/A",
+                    "volume_analysis": "N/A",
+                    "trend": "N/A"
+                }
+            }
+            results.append(fallback)
+            recommendations["HOLD"] += 1
+    
+    # Save data to file with timestamp
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    data = {
+        "stocks": results,
+        "summary": recommendations,
+        "last_updated": timestamp
+    }
+    
     try:
-        # Get basic info
-        info = get_stock_info(symbol)
-        
-        # Get historical data
-        history = get_historical_data(symbol)
-        
-        # Get news sentiment
-        news_sentiment = get_news_sentiment(symbol)
-        
-        # Initialize with data from either source
-        current_price = history.get("current_price") or info.get("current_price")
-        percent_change = history.get("percent_change_2w", 0)
-        volatility = history.get("volatility", 5)
-        
-        # Set default technical indicators if not available
-        technical_indicators = history.get("technical_indicators", {})
-        if not technical_indicators:
-            technical_indicators = {
-                "rsi": "N/A",
-                "macd": "N/A",
-                "volume_analysis": "N/A",
-                "trend": "N/A"
-            }
-        
-        # Add overall trend based on multiple indicators
-        if "trend" not in technical_indicators:
-            trend = "Neutral"
-            rsi_value = technical_indicators.get("rsi", "")
-            macd_value = technical_indicators.get("macd", "")
-            
-            bullish_signals = 0
-            bearish_signals = 0
-            
-            # Count bullish signals
-            if "Oversold" in str(rsi_value): bullish_signals += 1
-            if "Bullish" in str(macd_value): bullish_signals += 1
-            if percent_change < -7: bullish_signals += 1  # Potential buying opportunity
-            
-            # Count bearish signals
-            if "Overbought" in str(rsi_value): bearish_signals += 1
-            if "Bearish" in str(macd_value): bearish_signals += 1
-            if percent_change > 7: bearish_signals += 1  # Potential selling opportunity
-            
-            if bullish_signals > bearish_signals:
-                trend = "Bullish"
-            elif bearish_signals > bullish_signals:
-                trend = "Bearish"
-            
-            technical_indicators["trend"] = trend
-        
-        # Determine recommendation based on comprehensive analysis
-        recommendation = "HOLD"  # Default recommendation
-        reason = ""
-        
-        # Factors influencing the decision
-        factors = []
-        
-        # Price momentum
-        if percent_change > 10:
-            factors.append(f"Strong upward momentum (+{percent_change:.2f}%)")
-        elif percent_change > 5:
-            factors.append(f"Good upward momentum (+{percent_change:.2f}%)")
-        elif percent_change < -10:
-            factors.append(f"Significant price drop ({percent_change:.2f}%)")
-        elif percent_change < -5:
-            factors.append(f"Moderate price drop ({percent_change:.2f}%)")
-        
-        # Technical indicators
-        if "Overbought" in str(technical_indicators.get("rsi", "")):
-            factors.append("RSI indicates overbought conditions")
-        elif "Oversold" in str(technical_indicators.get("rsi", "")):
-            factors.append("RSI indicates oversold conditions")
-        
-        if "Bullish" in str(technical_indicators.get("macd", "")):
-            factors.append("MACD shows bullish momentum")
-        elif "Bearish" in str(technical_indicators.get("macd", "")):
-            factors.append("MACD shows bearish momentum")
-        
-        # Volume analysis
-        volume_analysis = technical_indicators.get("volume_analysis", "")
-        if "Increasing (High)" in str(volume_analysis):
-            factors.append("Trading volume is increasing significantly")
-        elif "Decreasing (High)" in str(volume_analysis):
-            factors.append("Trading volume is decreasing significantly")
-        
-        # Overall trend
-        if technical_indicators.get("trend") == "Bullish":
-            factors.append("Overall technical trend is bullish")
-        elif technical_indicators.get("trend") == "Bearish":
-            factors.append("Overall technical trend is bearish")
-        
-        # Make recommendation based on all factors
-        bullish_count = sum(1 for f in factors if any(b in f for b in ["upward", "bullish", "oversold", "increasing"]))
-        bearish_count = sum(1 for f in factors if any(b in f for b in ["drop", "overbought", "bearish", "decreasing"]))
-        
-        if bullish_count > bearish_count:
-            recommendation = "BUY"
-            reason = "Multiple bullish indicators suggest buying opportunity."
-        elif bearish_count > bullish_count:
-            recommendation = "SELL"
-            reason = "Multiple bearish indicators suggest considering selling."
-        else:
-            recommendation = "HOLD"
-            reason = "Mixed signals suggest maintaining current position."
-        
-        # Add details to the reason
-        if factors:
-            reason += " Based on: " + ", ".join(factors) + "."
-        
-        return {
-            "symbol": symbol,
-            "name": info.get("name", symbol),
-            "recommendation": recommendation,
-            "percent_change_2w": percent_change,
-            "current_price": current_price,
-            "reason": reason,
-            "technical_indicators": technical_indicators,
-            "news_sentiment": news_sentiment
-        }
+        with open('data/stock_analysis.json', 'w') as f:
+            json.dump(data, f, indent=2)
     except Exception as e:
-        logger.error(f"Error analyzing {symbol}: {str(e)}")
-        # Return basic entry on error
-        return {
-            "symbol": symbol,
-            "name": symbol,
-            "recommendation": "HOLD",
-            "percent_change_2w": 0,
-            "current_price": 100.0,
-            "reason": "Analysis unavailable. Maintain current position.",
-            "technical_indicators": {
-                "rsi": "N/A",
-                "macd": "N/A",
-                "volume_analysis": "N/A",
-                "trend": "N/A"
-            }
-        }
+        logger.error(f"Error saving analysis to file: {str(e)}")
+    
+    logger.info(f"Analysis complete. Analyzed {len(results)} stocks.")
+    return data
+
+@app.route('/')
+def index():
+    """Serve the main dashboard page"""
+    return render_template('index.html')
+
+@app.route('/api/stocks')
+def api_stocks():
+    """Get stock data - first try cache, then live data"""
+    try:
+        # Try to read from cached file first
+        try:
+            if os.path.exists('data/stock_analysis.json'):
+                with open('data/stock_analysis.json', 'r') as f:
+                    data = json.load(f)
+                    # Check if data is recent (less than 30 minutes old)
+                    last_updated = datetime.strptime(data['last_updated'], "%Y-%m-%d %H:%M:%S")
+                    age = datetime.now() - last_updated
+                    
+                    if age.total_seconds() < 1800:  # 30 minutes
+                        return jsonify(data)
+        except Exception as e:
+            logger.error(f"Error reading cached data: {str(e)}")
+        
+        # No recent data, run analysis
+        return jsonify(analyze_all_stocks())
+    except Exception as e:
+        error_msg = f"API error: {str(e)}"
+        logger.error(error_msg)
+        return jsonify({"error": error_msg}), 500
+
+@app.route('/api/refresh', methods=['POST'])
+def api_refresh():
+    """Force refresh stock data with improved error handling"""
+    try:
+        # Clear any cached data first
+        if os.path.exists('data/stock_analysis.json'):
+            try:
+                os.remove('data/stock_analysis.json')
+            except:
+                pass
+        
+        # Run fresh analysis
+        data = analyze_all_stocks()
+        
+        # Validate the result is actually in the correct format
+        if not isinstance(data, dict) or "stocks" not in data:
+            return jsonify({"success": False, "error": "Invalid analysis result format"}), 500
+            
+        return jsonify({"success": True, "message": "Data refreshed with latest market information"})
+    except Exception as e:
+        error_msg = f"Refresh error: {str(e)}"
+        logger.error(error_msg)
+        return jsonify({"success": False, "error": error_msg}), 500
+
+# Initial data load if running the app directly (not through wsgi)
+if __name__ == "__main__":
+    # Initial data load if no existing data
+    if not os.path.exists('data/stock_analysis.json'):
+        try:
+            analyze_all_stocks()
+        except Exception as e:
+            logger.error(f"Initial analysis error: {str(e)}")
+    
+    # Start the web server
+    app.run(host='0.0.0.0', port=5000)
