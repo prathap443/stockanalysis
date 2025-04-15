@@ -799,7 +799,7 @@ def analyze_stock(symbol):
             "technical_indicators": technical_indicators,
             "news_sentiment": news_sentiment
         }
-     except Exception as e:
+    except Exception as e:
         logger.error(f"Error analyzing {symbol}: {str(e)}")
         # Return basic entry on error
         return {
