@@ -10,7 +10,7 @@ import os
 # Setup logging
 logging.basicConfig(level=logging.INFO, 
                     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(name)
+logger = logging.getLogger(__name__)  # Fixed: Added __ around name
 
 # Create necessary directories
 os.makedirs('data', exist_ok=True)
@@ -42,5 +42,5 @@ refresh_thread = threading.Thread(target=refresh_data_periodically, daemon=True)
 refresh_thread.start()
 
 # This is what Gunicorn imports
-if name == "main":
+if __name__ == "__main__":  # Fixed: Added __ around name and main
     app.run()
