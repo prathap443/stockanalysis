@@ -316,18 +316,7 @@ def get_stock_info(symbol):
         }
         
         response = requests.get(url, headers=headers, timeout=15)
-        
-        # Check if response is JSON before parsing
-        content_type = response.headers.get('Content-Type', '')
-        if 'application/json' not in content_type and 'text/javascript' not in content_type:
-            logger.warning(f"Non-JSON response for {symbol}. Falling back to scraping.")
-            return get_stock_info_by_scraping(symbol)
-            
-        try:
-            data = response.json()
-        except ValueError:
-            logger.warning(f"Invalid JSON for {symbol}. Falling back to scraping.")
-            return get_stock_info_by_scraping(symbol)
+        data = response.json()
         
         if 'quoteResponse' in data and 'result' in data['quoteResponse'] and len(data['quoteResponse']['result']) > 0:
             quote = data['quoteResponse']['result'][0]
@@ -424,18 +413,7 @@ def get_historical_data(symbol, days=14):
         }
         
         response = requests.get(url, headers=headers, timeout=15)
-        
-        # Check if response is JSON before parsing
-        content_type = response.headers.get('Content-Type', '')
-        if 'application/json' not in content_type and 'text/javascript' not in content_type:
-            logger.warning(f"Non-JSON response for historical data of {symbol}. Using fallback data.")
-            return calculate_fallback_data(symbol)
-            
-        try:
-            data = response.json()
-        except ValueError:
-            logger.warning(f"Invalid JSON for historical data of {symbol}. Using fallback data.")
-            return calculate_fallback_data(symbol)
+        data = response.json()
         
         if "chart" not in data or "result" not in data["chart"] or not data["chart"]["result"]:
             return calculate_fallback_data(symbol)
@@ -611,86 +589,137 @@ def get_news_sentiment(symbol):
         logger.error(f"Error getting news for {symbol}: {str(e)}")
         return None
 
-# Add this function to your code (place it between get_news_sentiment and analyze_all_stocks)
 def analyze_stock(symbol):
-    """Analyze individual stock to generate recommendation"""
-    logger.info(f"Starting analysis for {symbol}...")
-    
+    """Analyze a stock with comprehensive indicators"""
     try:
-        # Get basic stock info
-        stock_info = get_stock_info(symbol)
-        # Get historical data (last 14 days)
-        historical_data = get_historical_data(symbol)
+        # Get basic info
+        info = get_stock_info(symbol)
+        
+        # Get historical data
+        history = get_historical_data(symbol)
+        
         # Get news sentiment
-        news = get_news_sentiment(symbol)
+        news_sentiment = get_news_sentiment(symbol)
         
-        # Extract key metrics
-        current_price = historical_data.get("current_price")
-        percent_change = historical_data.get("percent_change_2w", 0)
-        volatility = historical_data.get("volatility", 0)
-        rsi = historical_data.get("technical_indicators", {}).get("rsi", "N/A")
-        macd = historical_data.get("technical_indicators", {}).get("macd", "N/A")
+        # Initialize with data from either source
+        current_price = history.get("current_price") or info.get("current_price")
+        percent_change = history.get("percent_change_2w", 0)
+        volatility = history.get("volatility", 5)
         
-        # Initialize recommendation logic
-        recommendation = "HOLD"
-        reason = []
+        # Set default technical indicators if not available
+        technical_indicators = history.get("technical_indicators", {})
+        if not technical_indicators:
+            technical_indicators = {
+                "rsi": "N/A",
+                "macd": "N/A",
+                "volume_analysis": "N/A",
+                "trend": "N/A"
+            }
         
-        # RSI-based logic
-        if "Overbought" in rsi:
-            reason.append("RSI indicates overbought conditions")
-            recommendation = "SELL"
-        elif "Oversold" in rsi:
-            reason.append("RSI indicates oversold conditions")
-            recommendation = "BUY"
+        # Add overall trend based on multiple indicators
+        if "trend" not in technical_indicators:
+            trend = "Neutral"
+            rsi_value = technical_indicators.get("rsi", "")
+            macd_value = technical_indicators.get("macd", "")
+            
+            bullish_signals = 0
+            bearish_signals = 0
+            
+            # Count bullish signals
+            if "Oversold" in str(rsi_value): bullish_signals += 1
+            if "Bullish" in str(macd_value): bullish_signals += 1
+            if percent_change < -7: bullish_signals += 1  # Potential buying opportunity
+            
+            # Count bearish signals
+            if "Overbought" in str(rsi_value): bearish_signals += 1
+            if "Bearish" in str(macd_value): bearish_signals += 1
+            if percent_change > 7: bearish_signals += 1  # Potential selling opportunity
+            
+            if bullish_signals > bearish_signals:
+                trend = "Bullish"
+            elif bearish_signals > bullish_signals:
+                trend = "Bearish"
+            
+            technical_indicators["trend"] = trend
         
-        # MACD-based logic
-        if "Bearish" in macd:
-            reason.append("MACD shows bearish trend")
-            recommendation = "SELL"
-        elif "Bullish" in macd:
-            reason.append("MACD shows bullish trend")
-            recommendation = "BUY"
+        # Determine recommendation based on comprehensive analysis
+        recommendation = "HOLD"  # Default recommendation
+        reason = ""
         
-        # Price change momentum
-        if percent_change > 5:
-            reason.append("Strong positive momentum (2-week change +%.1f%%)" % percent_change)
-            recommendation = "BUY"
+        # Factors influencing the decision
+        factors = []
+        
+        # Price momentum
+        if percent_change > 10:
+            factors.append(f"Strong upward momentum (+{percent_change:.2f}%)")
+        elif percent_change > 5:
+            factors.append(f"Good upward momentum (+{percent_change:.2f}%)")
+        elif percent_change < -10:
+            factors.append(f"Significant price drop ({percent_change:.2f}%)")
         elif percent_change < -5:
-            reason.append("Negative momentum (2-week change %.1f%%)" % percent_change)
+            factors.append(f"Moderate price drop ({percent_change:.2f}%)")
+        
+        # Technical indicators
+        if "Overbought" in str(technical_indicators.get("rsi", "")):
+            factors.append("RSI indicates overbought conditions")
+        elif "Oversold" in str(technical_indicators.get("rsi", "")):
+            factors.append("RSI indicates oversold conditions")
+        
+        if "Bullish" in str(technical_indicators.get("macd", "")):
+            factors.append("MACD shows bullish momentum")
+        elif "Bearish" in str(technical_indicators.get("macd", "")):
+            factors.append("MACD shows bearish momentum")
+        
+        # Volume analysis
+        volume_analysis = technical_indicators.get("volume_analysis", "")
+        if "Increasing (High)" in str(volume_analysis):
+            factors.append("Trading volume is increasing significantly")
+        elif "Decreasing (High)" in str(volume_analysis):
+            factors.append("Trading volume is decreasing significantly")
+        
+        # Overall trend
+        if technical_indicators.get("trend") == "Bullish":
+            factors.append("Overall technical trend is bullish")
+        elif technical_indicators.get("trend") == "Bearish":
+            factors.append("Overall technical trend is bearish")
+        
+        # Make recommendation based on all factors
+        bullish_count = sum(1 for f in factors if any(b in f for b in ["upward", "bullish", "oversold", "increasing"]))
+        bearish_count = sum(1 for f in factors if any(b in f for b in ["drop", "overbought", "bearish", "decreasing"]))
+        
+        if bullish_count > bearish_count:
+            recommendation = "BUY"
+            reason = "Multiple bullish indicators suggest buying opportunity."
+        elif bearish_count > bullish_count:
             recommendation = "SELL"
+            reason = "Multiple bearish indicators suggest considering selling."
+        else:
+            recommendation = "HOLD"
+            reason = "Mixed signals suggest maintaining current position."
         
-        # News sentiment influence
-        if news:
-            if "Positive" in news:
-                reason.append("Positive news sentiment")
-                if recommendation == "SELL": recommendation = "HOLD"
-            elif "Negative" in news:
-                reason.append("Negative news sentiment")
-                if recommendation == "BUY": recommendation = "HOLD"
+        # Add details to the reason
+        if factors:
+            reason += " Based on: " + ", ".join(factors) + "."
         
-        # Volatility check
-        if volatility > 5:
-            reason.append("High volatility (%.1f%%)" % volatility)
-            if recommendation == "BUY": recommendation = "HOLD"
-        
-        # Compile analysis results
         return {
             "symbol": symbol,
-            "name": stock_info.get("name", symbol),
-            "current_price": current_price,
-            "percent_change_2w": percent_change,
+            "name": info.get("name", symbol),
             "recommendation": recommendation,
-            "reason": " ".join(reason) if reason else "No significant indicators",
-            "technical_indicators": historical_data.get("technical_indicators", {}),
-            "news_sentiment": news
+            "percent_change_2w": percent_change,
+            "current_price": current_price,
+            "reason": reason,
+            "technical_indicators": technical_indicators,
+            "news_sentiment": news_sentiment
         }
-        
     except Exception as e:
-        logger.error(f"Error in analyze_stock for {symbol}: {str(e)}")
+        logger.error(f"Error analyzing {symbol}: {str(e)}")
+        # Return basic entry on error
         return {
             "symbol": symbol,
             "name": symbol,
             "recommendation": "HOLD",
+            "percent_change_2w": 0,
+            "current_price": 100.0,
             "reason": "Analysis unavailable. Maintain current position.",
             "technical_indicators": {
                 "rsi": "N/A",
@@ -805,7 +834,7 @@ def api_refresh():
         logger.error(error_msg)
         return jsonify({"success": False, "error": error_msg}), 500
 
-# Initial data load if running the app directly (not through wsgi)
+# This is what Gunicorn imports
 if __name__ == "__main__":
     # Initial data load if no existing data
     if not os.path.exists('data/stock_analysis.json'):
