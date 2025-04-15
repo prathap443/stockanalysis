@@ -14,6 +14,8 @@ import time
 from datetime import datetime, timedelta
 import logging
 import random
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, 
@@ -730,40 +732,33 @@ def analyze_stock(symbol):
         }
 
 def analyze_all_stocks():
-    """Analyze all 20 stocks with improved error handling"""
-    logger.info("Starting comprehensive stock analysis...")
+    """Analyze all 20 stocks in parallel with optimized API calls"""
+    logger.info("Starting parallel stock analysis...")
     
     results = []
     recommendations = {"BUY": 0, "HOLD": 0, "SELL": 0, "UNKNOWN": 0}
-    
-    for symbol in STOCK_LIST:
-        try:
-            logger.info(f"Analyzing {symbol}...")
-            analysis = analyze_stock(symbol)
-            recommendations[analysis.get("recommendation", "UNKNOWN")] += 1
-            results.append(analysis)
-            time.sleep(random.uniform(0.5, 1.0))  # Slight delay between stocks
-        except Exception as e:
-            logger.error(f"Error analyzing {symbol}: {str(e)}")
-            # Add basic entry on error
-            fallback = {
-                "symbol": symbol,
-                "name": symbol,
-                "recommendation": "HOLD",
-                "percent_change_2w": random.uniform(-3, 3),
-                "current_price": random.uniform(80, 300),
-                "reason": "Analysis unavailable. Maintain current position.",
-                "technical_indicators": {
-                    "rsi": "N/A",
-                    "macd": "N/A",
-                    "volume_analysis": "N/A",
-                    "trend": "N/A"
-                }
-            }
-            results.append(fallback)
-            recommendations["HOLD"] += 1
-    
-    # Save data to file with timestamp
+
+    # Use thread pool for parallel execution
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        future_to_symbol = {
+            executor.submit(analyze_stock, symbol): symbol 
+            for symbol in STOCK_LIST
+        }
+        
+        for future in as_completed(future_to_symbol):
+            symbol = future_to_symbol[future]
+            try:
+                analysis = future.result()
+                rec = analysis.get("recommendation", "UNKNOWN")
+                recommendations[rec] += 1
+                results.append(analysis)
+            except Exception as e:
+                logger.error(f"Error processing {symbol}: {str(e)}")
+                # Add fallback entry
+                results.append(create_fallback_entry(symbol))
+                recommendations["HOLD"] += 1
+
+    # Save data and return
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     data = {
         "stocks": results,
@@ -775,10 +770,25 @@ def analyze_all_stocks():
         with open('data/stock_analysis.json', 'w') as f:
             json.dump(data, f, indent=2)
     except Exception as e:
-        logger.error(f"Error saving analysis to file: {str(e)}")
+        logger.error(f"Error saving analysis: {str(e)}")
     
-    logger.info(f"Analysis complete. Analyzed {len(results)} stocks.")
+    logger.info(f"Parallel analysis complete. Processed {len(results)} stocks.")
     return data
+
+def create_fallback_entry(symbol):
+    """Create a fallback stock entry"""
+    return {
+        "symbol": symbol,
+        "name": symbol,
+        "recommendation": "HOLD",
+        "percent_change_2w": random.uniform(-3, 3),
+        "current_price": random.uniform(80, 300),
+        "reason": "Analysis unavailable. Maintain position.",
+        "technical_indicators": {
+            "rsi": "N/A", "macd": "N/A", 
+            "volume_analysis": "N/A", "trend": "N/A"
+        }
+    }
 
 @app.route('/')
 def index():
