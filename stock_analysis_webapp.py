@@ -799,20 +799,3 @@ def analyze_stock(symbol):
             "technical_indicators": technical_indicators,
             "news_sentiment": news_sentiment
         }
-    except Exception as e:
-        logger.error(f"Error analyzing {symbol}: {str(e)}")
-        # Return basic entry on error
-        return {
-            "symbol": symbol,
-            "name": symbol,
-            "recommendation": "HOLD",
-            "percent_change_2w": 0,
-            "current_price": 100.0,
-            "reason": "Analysis unavailable. Maintain current position.",
-            "technical_indicators": {
-                "rsi": "N/A",
-                "macd": "N/A",
-                "volume_analysis": "N/A",
-                "trend": "N/A"
-            }
-        }
