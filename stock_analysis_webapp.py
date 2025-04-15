@@ -4,9 +4,10 @@ Enhanced Stock Analysis Web Application
 - Comprehensive analysis with more technical indicators
 - Improved refresh functionality
 - Better error handling and reliability
+- Added chart links for each stock
 """
 
-from flask import Flask, render_template, jsonify, send_from_directory
+from flask import Flask, render_template, jsonify, send_from_directory, redirect
 import requests
 import json
 import os
@@ -89,6 +90,21 @@ html_template = """
             border-radius: 5px;
             margin-top: 10px;
         }
+        .chart-link {
+            color: #0d6efd;
+            text-decoration: none;
+            cursor: pointer;
+        }
+        .chart-link:hover {
+            text-decoration: underline;
+        }
+        .modal-dialog {
+            max-width: 800px;
+        }
+        .chart-container {
+            width: 100%;
+            height: 400px;
+        }
     </style>
 </head>
 <body>
@@ -142,6 +158,27 @@ html_template = """
         </div>
     </div>
     
+    <!-- Chart Modal -->
+    <div class="modal fade" id="chartModal" tabindex="-1" aria-labelledby="chartModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="chartModalLabel">Stock Chart</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div id="chartContainer" class="chart-container">
+                        <iframe id="chartFrame" width="100%" height="400" frameborder="0"></iframe>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                    <a id="fullChartLink" href="#" target="_blank" class="btn btn-primary">View Full Chart</a>
+                </div>
+            </div>
+        </div>
+    </div>
+    
     <div class="loading-overlay" id="refreshOverlay">
         <div class="spinner-border text-primary mb-3" role="status">
             <span class="visually-hidden">Loading...</span>
@@ -160,6 +197,10 @@ html_template = """
         const sellCount = document.getElementById('sellCount');
         const errorMessage = document.getElementById('error-message');
         const refreshOverlay = document.getElementById('refreshOverlay');
+        const chartFrame = document.getElementById('chartFrame');
+        const chartModalLabel = document.getElementById('chartModalLabel');
+        const fullChartLink = document.getElementById('fullChartLink');
+        const chartModal = new bootstrap.Modal(document.getElementById('chartModal'));
         
         // Load data on page load
         document.addEventListener('DOMContentLoaded', fetchStocks);
@@ -213,6 +254,24 @@ html_template = """
             errorMessage.style.display = 'block';
         }
         
+        function openChart(symbol, name) {
+            // Set modal title
+            chartModalLabel.textContent = name + ' (' + symbol + ') Chart';
+            
+            // Set chart source
+            const chartUrl = `https://finance.yahoo.com/chart/${symbol}`;
+            const embedUrl = `https://finance.yahoo.com/quote/${symbol}/chart?embedded=true`;
+            
+            // Set the iframe source
+            chartFrame.src = embedUrl;
+            
+            // Update full chart link
+            fullChartLink.href = chartUrl;
+            
+            // Show modal
+            chartModal.show();
+        }
+        
         function displayStocks(data) {
             // Update counts
             buyCount.textContent = data.summary.BUY || 0;
@@ -258,7 +317,12 @@ html_template = """
                         <div class="card-body">
                             <div class="d-flex justify-content-between align-items-start">
                                 <div>
-                                    <h5 class="card-title">${stock.symbol}</h5>
+                                    <h5 class="card-title">
+                                        ${stock.symbol}
+                                        <a class="chart-link" onclick="openChart('${stock.symbol}', '${stock.name || stock.symbol}')">
+                                            <small>(View Chart)</small>
+                                        </a>
+                                    </h5>
                                     <h6 class="card-subtitle mb-2 text-muted">${stock.name || ''}</h6>
                                 </div>
                                 <span class="badge bg-${stock.recommendation === 'BUY' ? 'success' : 
@@ -318,7 +382,18 @@ def get_stock_info(symbol):
         }
         
         response = requests.get(url, headers=headers, timeout=15)
-        data = response.json()
+        
+        # Check if response is JSON before parsing
+        content_type = response.headers.get('Content-Type', '')
+        if 'application/json' not in content_type and 'text/javascript' not in content_type:
+            logger.warning(f"Non-JSON response for {symbol}. Falling back to scraping.")
+            return get_stock_info_by_scraping(symbol)
+            
+        try:
+            data = response.json()
+        except ValueError:
+            logger.warning(f"Invalid JSON for {symbol}. Falling back to scraping.")
+            return get_stock_info_by_scraping(symbol)
         
         if 'quoteResponse' in data and 'result' in data['quoteResponse'] and len(data['quoteResponse']['result']) > 0:
             quote = data['quoteResponse']['result'][0]
@@ -415,7 +490,18 @@ def get_historical_data(symbol, days=14):
         }
         
         response = requests.get(url, headers=headers, timeout=15)
-        data = response.json()
+        
+        # Check if response is JSON before parsing
+        content_type = response.headers.get('Content-Type', '')
+        if 'application/json' not in content_type and 'text/javascript' not in content_type:
+            logger.warning(f"Non-JSON response for historical data of {symbol}. Using fallback data.")
+            return calculate_fallback_data(symbol)
+            
+        try:
+            data = response.json()
+        except ValueError:
+            logger.warning(f"Invalid JSON for historical data of {symbol}. Using fallback data.")
+            return calculate_fallback_data(symbol)
         
         if "chart" not in data or "result" not in data["chart"] or not data["chart"]["result"]:
             return calculate_fallback_data(symbol)
@@ -713,145 +799,3 @@ def analyze_stock(symbol):
             "technical_indicators": technical_indicators,
             "news_sentiment": news_sentiment
         }
-    except Exception as e:
-        logger.error(f"Error analyzing {symbol}: {str(e)}")
-        # Return basic entry on error
-        return {
-            "symbol": symbol,
-            "name": symbol,
-            "recommendation": "HOLD",
-            "percent_change_2w": 0,
-            "current_price": 100.0,
-            "reason": "Analysis unavailable. Maintain current position.",
-            "technical_indicators": {
-                "rsi": "N/A",
-                "macd": "N/A",
-                "volume_analysis": "N/A",
-                "trend": "N/A"
-            }
-        }
-
-def analyze_all_stocks():
-    """Analyze all 20 stocks in parallel with optimized API calls"""
-    logger.info("Starting parallel stock analysis...")
-    
-    results = []
-    recommendations = {"BUY": 0, "HOLD": 0, "SELL": 0, "UNKNOWN": 0}
-
-    # Use thread pool for parallel execution
-    with ThreadPoolExecutor(max_workers=5) as executor:
-        future_to_symbol = {
-            executor.submit(analyze_stock, symbol): symbol 
-            for symbol in STOCK_LIST
-        }
-        
-        for future in as_completed(future_to_symbol):
-            symbol = future_to_symbol[future]
-            try:
-                analysis = future.result()
-                rec = analysis.get("recommendation", "UNKNOWN")
-                recommendations[rec] += 1
-                results.append(analysis)
-            except Exception as e:
-                logger.error(f"Error processing {symbol}: {str(e)}")
-                # Add fallback entry
-                results.append(create_fallback_entry(symbol))
-                recommendations["HOLD"] += 1
-
-    # Save data and return
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    data = {
-        "stocks": results,
-        "summary": recommendations,
-        "last_updated": timestamp
-    }
-    
-    try:
-        with open('data/stock_analysis.json', 'w') as f:
-            json.dump(data, f, indent=2)
-    except Exception as e:
-        logger.error(f"Error saving analysis: {str(e)}")
-    
-    logger.info(f"Parallel analysis complete. Processed {len(results)} stocks.")
-    return data
-
-def create_fallback_entry(symbol):
-    """Create a fallback stock entry"""
-    return {
-        "symbol": symbol,
-        "name": symbol,
-        "recommendation": "HOLD",
-        "percent_change_2w": random.uniform(-3, 3),
-        "current_price": random.uniform(80, 300),
-        "reason": "Analysis unavailable. Maintain position.",
-        "technical_indicators": {
-            "rsi": "N/A", "macd": "N/A", 
-            "volume_analysis": "N/A", "trend": "N/A"
-        }
-    }
-
-@app.route('/')
-def index():
-    """Serve the main dashboard page"""
-    return render_template('index.html')
-
-@app.route('/api/stocks')
-def api_stocks():
-    """Get stock data - first try cache, then live data"""
-    try:
-        # Try to read from cached file first
-        try:
-            if os.path.exists('data/stock_analysis.json'):
-                with open('data/stock_analysis.json', 'r') as f:
-                    data = json.load(f)
-                    # Check if data is recent (less than 30 minutes old)
-                    last_updated = datetime.strptime(data['last_updated'], "%Y-%m-%d %H:%M:%S")
-                    age = datetime.now() - last_updated
-                    
-                    if age.total_seconds() < 1800:  # 30 minutes
-                        return jsonify(data)
-        except Exception as e:
-            logger.error(f"Error reading cached data: {str(e)}")
-        
-        # No recent data, run analysis
-        return jsonify(analyze_all_stocks())
-    except Exception as e:
-        error_msg = f"API error: {str(e)}"
-        logger.error(error_msg)
-        return jsonify({"error": error_msg}), 500
-
-@app.route('/api/refresh', methods=['POST'])
-def api_refresh():
-    """Force refresh stock data with improved error handling"""
-    try:
-        # Clear any cached data first
-        if os.path.exists('data/stock_analysis.json'):
-            try:
-                os.remove('data/stock_analysis.json')
-            except:
-                pass
-        
-        # Run fresh analysis
-        data = analyze_all_stocks()
-        
-        # Validate the result is actually in the correct format
-        if not isinstance(data, dict) or "stocks" not in data:
-            return jsonify({"success": False, "error": "Invalid analysis result format"}), 500
-            
-        return jsonify({"success": True, "message": "Data refreshed with latest market information"})
-    except Exception as e:
-        error_msg = f"Refresh error: {str(e)}"
-        logger.error(error_msg)
-        return jsonify({"success": False, "error": error_msg}), 500
-
-# This is what Gunicorn imports
-if __name__ == "__main__":
-    # Initial data load if no existing data
-    if not os.path.exists('data/stock_analysis.json'):
-        try:
-            analyze_all_stocks()
-        except Exception as e:
-            logger.error(f"Initial analysis error: {str(e)}")
-    
-    # Start the web server
-    app.run(host='0.0.0.0', port=5000)
