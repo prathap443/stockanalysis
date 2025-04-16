@@ -38,25 +38,7 @@ STOCK_LIST = [
     "BA", "PFE", "KO", "PEP", "XOM"
 ]
 
-"""
-Enhanced Stock Analysis Web Application
-- Modern glassmorphism design
-- Dark mode support
-- Interactive charts
-- Enhanced visual hierarchy
-"""
 
-from flask import Flask, render_template, jsonify
-import requests
-import json
-import os
-import time
-import re
-import logging
-import random
-import numpy as np
-from datetime import datetime, timedelta
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Setup logging
 logging.basicConfig(
