@@ -219,7 +219,10 @@ html_template = """
             holdCount.textContent = data.summary.HOLD || 0;
             sellCount.textContent = data.summary.SELL || 0;
             lastUpdated.textContent = `Last updated: ${data.last_updated}`;
-            
+            <a class="chart-link" onclick='openChart("${stock.symbol}", "${stock.name || stock.symbol}", ${JSON.stringify(stock.history_14d)})'>
+    <small>(View Chart)</small>
+</a>
+
             // Clear existing stocks
             stocksList.innerHTML = '';
             
@@ -232,7 +235,54 @@ html_template = """
                 const recClass = stock.recommendation === 'BUY' ? 'buy' : 
                                 stock.recommendation === 'SELL' ? 'sell' : 'hold';
                 
+                let chartInstance = null;
+
+function openChart(symbol, name, history) {
+    chartModalLabel.textContent = name + ' (' + symbol + ') - 14 Day Chart';
+    // Hide iframe, show canvas
+    document.getElementById('chartFrame').style.display = 'none';
+    document.getElementById('stockChart').style.display = 'block';
+
+    // Prepare data
+    const labels = history.map(item => item.date);
+    const data = history.map(item => item.close);
+
+    // Destroy previous chart instance if exists
+    if (chartInstance) {
+        chartInstance.destroy();
+    }
+    const ctx = document.getElementById('stockChart').getContext('2d');
+    chartInstance = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: symbol + ' Close Price',
+                data: data,
+                borderColor: 'rgba(13,110,253,1)',
+                backgroundColor: 'rgba(13,110,253,0.1)',
+                tension: 0.2
+            }]
+        },
+        options: {
+            responsive: true,
+            plugins: {
+                legend: { display: false },
+                title: { display: false }
+            },
+            scales: {
+                x: { display: true, title: { display: true, text: 'Date' } },
+                y: { display: true, title: { display: true, text: 'Close Price ($)' } }
+            }
+        }
+    });
+    chartModal.show();
+}
+                
+
                 // Format technical indicators
+
+
                 let technicalHtml = '';
                 if (stock.technical_indicators) {
                     technicalHtml = `
@@ -296,7 +346,9 @@ html_template = """
             stocksList.style.display = 'flex';
         }
     </script>
-    
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <canvas id="stockChart" width="100%" height="400"></canvas>
+
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>
@@ -843,6 +895,48 @@ def api_refresh():
         error_msg = f"Refresh error: {str(e)}"
         logger.error(error_msg)
         return jsonify({"success": False, "error": error_msg}), 500
+    
+def get_14d_history(symbol):
+    """
+    Fetches the last 14 days' closing prices for the given symbol.
+    Returns a list of dicts: [{'date': 'YYYY-MM-DD', 'close': price}, ...]
+    """
+    end = int(time.time())
+    start = end - 60*60*24*14  # 14 days ago
+    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?period1={start}&period2={end}&interval=1d"
+    headers = {
+        "User-Agent": "Mozilla/5.0"
+    }
+    try:
+        r = requests.get(url, headers=headers, timeout=10)
+        data = r.json()
+        chart = data['chart']['result'][0]
+        timestamps = chart['timestamp']
+        closes = chart['indicators']['quote'][0]['close']
+        prices = []
+        for ts, close in zip(timestamps, closes):
+            if close is not None:
+                date = datetime.utcfromtimestamp(ts).strftime('%Y-%m-%d')
+                prices.append({'date': date, 'close': close})
+        return prices
+    except Exception as e:
+        logger.error(f"Error fetching history for {symbol}: {e}")
+        return []
+    
+@app.route('/api/stocks')
+def api_stocks():
+    data = {
+        "last_updated": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "summary": {"BUY": 7, "HOLD": 8, "SELL": 5},
+        "stocks": []
+    }
+    for symbol in STOCK_LIST:
+        stock_info = get_stock_info(symbol)
+        stock_info['history_14d'] = get_14d_history(symbol)
+        # ... add other fields as needed ...
+        data['stocks'].append(stock_info)
+    return jsonify(data)
+
 
 # This is what Gunicorn imports
 if __name__ == "__main__":
