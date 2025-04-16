@@ -184,6 +184,115 @@ html_template = """
             loadDashboard();
         });
     </script>
+    <script>
+    // Fetch and render dashboard data
+    async function loadDashboard() {
+        try {
+            const response = await fetch('/api/stocks');
+            const data = await response.json();
+            
+            // Update last updated time
+            document.getElementById('lastUpdated').innerText = `Last updated: ${data.last_updated}`;
+            
+            renderSummary(data.summary);
+            renderStocks(data.stocks);
+        } catch (error) {
+            console.error('Error loading dashboard:', error);
+        }
+    }
+
+    function renderSummary(summary) {
+        const summaryHtml = `
+            <div class="card mb-4 fade-in">
+                <div class="card-body">
+                    <h5 class="card-title">Market Summary</h5>
+                    <div class="row text-center">
+                        <div class="col-md-4">
+                            <div class="text-success h4">${summary.BUY} BUY</div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="text-warning h4">${summary.HOLD} HOLD</div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="text-danger h4">${summary.SELL} SELL</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+        document.getElementById('dashboardContent').innerHTML = summaryHtml;
+    }
+
+    function renderStocks(stocks) {
+        let stocksHtml = '<div class="row g-4">';
+        
+        stocks.forEach(stock => {
+            const trendColor = stock.percent_change_2w >= 0 ? 'text-success' : 'text-danger';
+            const trendIcon = stock.percent_change_2w >= 0 ? '↑' : '↓';
+            
+            stocksHtml += `
+                <div class="col-md-6 col-lg-4">
+                    <div class="card stock-card fade-in">
+                        <div class="card-body">
+                            <div class="d-flex justify-content-between align-items-center mb-3">
+                                <div>
+                                    <h5 class="card-title mb-0">${stock.symbol}</h5>
+                                    <small class="text-muted">${stock.name}</small>
+                                </div>
+                                <span class="badge bg-${stock.recommendation === 'BUY' ? 'success' : stock.recommendation === 'SELL' ? 'danger' : 'warning'}">
+                                    ${stock.recommendation}
+                                </span>
+                            </div>
+                            
+                            <div class="mb-3">
+                                <h3 class="${trendColor}">$${stock.current_price?.toFixed(2) || 'N/A'}</h3>
+                                <div class="${trendColor}">
+                                    ${trendIcon} ${Math.abs(stock.percent_change_2w).toFixed(2)}%
+                                    <span class="text-muted">(2wk)</span>
+                                </div>
+                            </div>
+                            
+                            <div class="row mb-3">
+                                <div class="col-6">
+                                    <small class="text-muted">RSI:</small><br>
+                                    ${stock.technical_indicators.rsi || 'N/A'}
+                                </div>
+                                <div class="col-6">
+                                    <small class="text-muted">MACD:</small><br>
+                                    ${stock.technical_indicators.macd || 'N/A'}
+                                </div>
+                            </div>
+                            
+                            <div class="alert alert-secondary small p-2 mb-3">
+                                ${stock.reason}
+                            </div>
+                            
+                            <div class="text-muted small">
+                                News: ${stock.news_sentiment}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        });
+
+        stocksHtml += '</div>';
+        document.getElementById('dashboardContent').innerHTML += stocksHtml;
+    }
+
+    // Add refresh functionality
+    document.getElementById('refreshBtn').addEventListener('click', async () => {
+        try {
+            const response = await fetch('/api/refresh', { method: 'POST' });
+            const result = await response.json();
+            if (result.success) {
+                loadDashboard();
+            }
+        } catch (error) {
+            console.error('Refresh failed:', error);
+        }
+    });
+</script>
 </body>
 </html>
 """
