@@ -4,6 +4,7 @@ Enhanced Stock Analysis Web Application
 - Comprehensive analysis with more technical indicators
 - Improved refresh functionality
 - Better error handling and reliability
+- 14-day trend charts
 """
 
 from flask import Flask, render_template, jsonify, send_from_directory
@@ -15,7 +16,6 @@ from datetime import datetime, timedelta
 import logging
 import random
 from concurrent.futures import ThreadPoolExecutor, as_completed
-
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, 
@@ -46,6 +46,7 @@ html_template = """
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Stock Market Dashboard - Prathap's Analysis</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         .stock-card { 
             transition: transform 0.2s; 
@@ -88,6 +89,14 @@ html_template = """
             background-color: rgba(0,0,0,0.03);
             border-radius: 5px;
             margin-top: 10px;
+        }
+        .chart-link {
+            cursor: pointer;
+            color: #0d6efd;
+            text-decoration: underline;
+        }
+        .chart-link:hover {
+            color: #0b5ed7;
         }
     </style>
 </head>
@@ -149,6 +158,21 @@ html_template = """
         <p>Refreshing data with latest market information... This may take a minute...</p>
     </div>
     
+    <!-- Chart Modal -->
+    <div class="modal fade" id="chartModal" tabindex="-1" aria-labelledby="chartModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="chartModalLabel">14 Day Price Trend</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <canvas id="stockChart" width="100%" height="400"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script>
         // Get elements
         const stocksList = document.getElementById('stocksList');
@@ -160,7 +184,8 @@ html_template = """
         const sellCount = document.getElementById('sellCount');
         const errorMessage = document.getElementById('error-message');
         const refreshOverlay = document.getElementById('refreshOverlay');
-        
+        let chartInstance = null;
+
         // Load data on page load
         document.addEventListener('DOMContentLoaded', fetchStocks);
         
@@ -213,16 +238,53 @@ html_template = """
             errorMessage.style.display = 'block';
         }
         
+        function openChart(symbol, name, history) {
+            const modalLabel = document.getElementById('chartModalLabel');
+            modalLabel.textContent = `${name} (${symbol}) - 14 Day Trend`;
+            
+            if (chartInstance) {
+                chartInstance.destroy();
+            }
+
+            const ctx = document.getElementById('stockChart').getContext('2d');
+            const labels = history.map(item => item.date);
+            const data = history.map(item => item.close);
+
+            chartInstance = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'Closing Price',
+                        data: data,
+                        borderColor: '#0d6efd',
+                        backgroundColor: 'rgba(13,110,253,0.1)',
+                        tension: 0.2
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    plugins: {
+                        legend: { display: false },
+                        title: { display: false }
+                    },
+                    scales: {
+                        x: { title: { display: true, text: 'Date' } },
+                        y: { title: { display: true, text: 'Price (USD)' } }
+                    }
+                }
+            });
+
+            new bootstrap.Modal(document.getElementById('chartModal')).show();
+        }
+
         function displayStocks(data) {
             // Update counts
             buyCount.textContent = data.summary.BUY || 0;
             holdCount.textContent = data.summary.HOLD || 0;
             sellCount.textContent = data.summary.SELL || 0;
             lastUpdated.textContent = `Last updated: ${data.last_updated}`;
-            <a class="chart-link" onclick='openChart("${stock.symbol}", "${stock.name || stock.symbol}", ${JSON.stringify(stock.history_14d)})'>
-    <small>(View Chart)</small>
-</a>
-
+            
             // Clear existing stocks
             stocksList.innerHTML = '';
             
@@ -235,54 +297,7 @@ html_template = """
                 const recClass = stock.recommendation === 'BUY' ? 'buy' : 
                                 stock.recommendation === 'SELL' ? 'sell' : 'hold';
                 
-                let chartInstance = null;
-
-function openChart(symbol, name, history) {
-    chartModalLabel.textContent = name + ' (' + symbol + ') - 14 Day Chart';
-    // Hide iframe, show canvas
-    document.getElementById('chartFrame').style.display = 'none';
-    document.getElementById('stockChart').style.display = 'block';
-
-    // Prepare data
-    const labels = history.map(item => item.date);
-    const data = history.map(item => item.close);
-
-    // Destroy previous chart instance if exists
-    if (chartInstance) {
-        chartInstance.destroy();
-    }
-    const ctx = document.getElementById('stockChart').getContext('2d');
-    chartInstance = new Chart(ctx, {
-        type: 'line',
-        data: {
-            labels: labels,
-            datasets: [{
-                label: symbol + ' Close Price',
-                data: data,
-                borderColor: 'rgba(13,110,253,1)',
-                backgroundColor: 'rgba(13,110,253,0.1)',
-                tension: 0.2
-            }]
-        },
-        options: {
-            responsive: true,
-            plugins: {
-                legend: { display: false },
-                title: { display: false }
-            },
-            scales: {
-                x: { display: true, title: { display: true, text: 'Date' } },
-                y: { display: true, title: { display: true, text: 'Close Price ($)' } }
-            }
-        }
-    });
-    chartModal.show();
-}
-                
-
                 // Format technical indicators
-
-
                 let technicalHtml = '';
                 if (stock.technical_indicators) {
                     technicalHtml = `
@@ -329,6 +344,13 @@ function openChart(symbol, name, history) {
                                 </div>
                             </div>
                             
+                            <div class="text-end mt-2">
+                                <a class="chart-link" 
+                                   onclick='openChart("${stock.symbol}", "${stock.name || stock.symbol}", ${JSON.stringify(stock.history_14d)})'>
+                                    View 14-Day Trend
+                                </a>
+                            </div>
+
                             <div class="mt-3">
                                 <p>${stock.reason || ''}</p>
                                 ${newsHtml}
@@ -346,9 +368,7 @@ function openChart(symbol, name, history) {
             stocksList.style.display = 'flex';
         }
     </script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <canvas id="stockChart" width="100%" height="400"></canvas>
-
+    
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>
@@ -358,6 +378,28 @@ function openChart(symbol, name, history) {
 with open('templates/index.html', 'w') as f:
     f.write(html_template)
 
+def get_14d_history(symbol):
+    """Get 14-day historical prices for charts"""
+    end = int(time.time())
+    start = end - 60*60*24*14  # 14 days
+    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?period1={start}&period2={end}&interval=1d"
+    headers = {"User-Agent": "Mozilla/5.0"}
+    
+    try:
+        response = requests.get(url, headers=headers, timeout=10)
+        data = response.json()
+        chart = data['chart']['result'][0]
+        timestamps = chart['timestamp']
+        closes = chart['indicators']['quote'][0]['close']
+        return [{
+            'date': datetime.utcfromtimestamp(ts).strftime('%Y-%m-%d'),
+            'close': close
+        } for ts, close in zip(timestamps, closes) if close is not None]
+    except Exception as e:
+        logger.error(f"Error fetching 14d history for {symbol}: {str(e)}")
+        return []
+
+# Continue to part 2 for the remaining code...
 def get_stock_info(symbol):
     """Get basic stock info and current price with improved reliability"""
     time.sleep(random.uniform(0.5, 1.5))  # Randomized delay to avoid rate limiting
@@ -655,6 +697,9 @@ def analyze_stock(symbol):
         # Get news sentiment
         news_sentiment = get_news_sentiment(symbol)
         
+        # Get 14-day price history for charts
+        history_14d = get_14d_history(symbol)
+        
         # Initialize with data from either source
         current_price = history.get("current_price") or info.get("current_price")
         percent_change = history.get("percent_change_2w", 0)
@@ -763,7 +808,8 @@ def analyze_stock(symbol):
             "current_price": current_price,
             "reason": reason,
             "technical_indicators": technical_indicators,
-            "news_sentiment": news_sentiment
+            "news_sentiment": news_sentiment,
+            "history_14d": history_14d
         }
     except Exception as e:
         logger.error(f"Error analyzing {symbol}: {str(e)}")
@@ -780,7 +826,8 @@ def analyze_stock(symbol):
                 "macd": "N/A",
                 "volume_analysis": "N/A",
                 "trend": "N/A"
-            }
+            },
+            "history_14d": []
         }
 
 def analyze_all_stocks():
@@ -839,7 +886,8 @@ def create_fallback_entry(symbol):
         "technical_indicators": {
             "rsi": "N/A", "macd": "N/A", 
             "volume_analysis": "N/A", "trend": "N/A"
-        }
+        },
+        "history_14d": []
     }
 
 @app.route('/')
@@ -895,50 +943,7 @@ def api_refresh():
         error_msg = f"Refresh error: {str(e)}"
         logger.error(error_msg)
         return jsonify({"success": False, "error": error_msg}), 500
-    
-def get_14d_history(symbol):
-    """
-    Fetches the last 14 days' closing prices for the given symbol.
-    Returns a list of dicts: [{'date': 'YYYY-MM-DD', 'close': price}, ...]
-    """
-    end = int(time.time())
-    start = end - 60*60*24*14  # 14 days ago
-    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?period1={start}&period2={end}&interval=1d"
-    headers = {
-        "User-Agent": "Mozilla/5.0"
-    }
-    try:
-        r = requests.get(url, headers=headers, timeout=10)
-        data = r.json()
-        chart = data['chart']['result'][0]
-        timestamps = chart['timestamp']
-        closes = chart['indicators']['quote'][0]['close']
-        prices = []
-        for ts, close in zip(timestamps, closes):
-            if close is not None:
-                date = datetime.utcfromtimestamp(ts).strftime('%Y-%m-%d')
-                prices.append({'date': date, 'close': close})
-        return prices
-    except Exception as e:
-        logger.error(f"Error fetching history for {symbol}: {e}")
-        return []
-    
-@app.route('/api/stocks')
-def api_stocks():
-    data = {
-        "last_updated": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "summary": {"BUY": 7, "HOLD": 8, "SELL": 5},
-        "stocks": []
-    }
-    for symbol in STOCK_LIST:
-        stock_info = get_stock_info(symbol)
-        stock_info['history_14d'] = get_14d_history(symbol)
-        # ... add other fields as needed ...
-        data['stocks'].append(stock_info)
-    return jsonify(data)
 
-
-# This is what Gunicorn imports
 if __name__ == "__main__":
     # Initial data load if no existing data
     if not os.path.exists('data/stock_analysis.json'):
