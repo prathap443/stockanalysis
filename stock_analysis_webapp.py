@@ -16,7 +16,7 @@ from datetime import datetime, timedelta
 import logging
 import random
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import numpy as np
+# Removed numpy import as it's not used
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, 
