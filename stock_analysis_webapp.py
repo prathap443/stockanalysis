@@ -401,54 +401,89 @@ def get_14d_history(symbol):
 
 # Continue to part 2 for the remaining code...
 def get_stock_info(symbol):
-    """Get stock info with retry logic and fallback"""
+    """Get basic stock info and current price with improved reliability"""
+    time.sleep(random.uniform(0.5, 1.5))  # Randomized delay to avoid rate limiting
+    
     try:
+        # Use the Yahoo Finance API directly
         url = f"https://query1.finance.yahoo.com/v7/finance/quote?symbols={symbol}"
-        headers = {"User-Agent": "Mozilla/5.0"}
-        response = requests.get(url, headers=headers, timeout=15)
-        response.raise_for_status()
-        
-        data = response.json()
-        if not data.get('quoteResponse', {}).get('result'):
-            raise ValueError("Empty API response")
-            
-        quote = data['quoteResponse']['result'][0]
-        return {
-            "symbol": symbol,
-            "name": quote.get('shortName', symbol),
-            "current_price": quote.get('regularMarketPrice'),
-            "sector": quote.get('sector', 'Unknown'),
-            "industry": quote.get('industry', 'Unknown')
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
         }
+        
+        response = requests.get(url, headers=headers, timeout=15)
+        data = response.json()
+        
+        if 'quoteResponse' in data and 'result' in data['quoteResponse'] and len(data['quoteResponse']['result']) > 0:
+            quote = data['quoteResponse']['result'][0]
+            return {
+                "symbol": symbol,
+                "name": quote.get('shortName', symbol),
+                "current_price": quote.get('regularMarketPrice', None),
+                "sector": quote.get('sector', 'Unknown'),
+                "industry": quote.get('industry', 'Unknown'),
+                "market_cap": quote.get('marketCap', None),
+                "pe_ratio": quote.get('trailingPE', None)
+            }
+        else:
+            # Fallback to scraping if API doesn't return expected data
+            return get_stock_info_by_scraping(symbol)
     except Exception as e:
-        logger.warning(f"API failed for {symbol}, falling back: {str(e)}")
+        logger.error(f"Error fetching info for {symbol}: {str(e)}")
+        # Fallback to scraping on exception
         return get_stock_info_by_scraping(symbol)
 
 def get_stock_info_by_scraping(symbol):
-    """Fallback scraping method"""
+    """Get stock info by scraping - backup method"""
     try:
         url = f"https://finance.yahoo.com/quote/{symbol}"
-        headers = {"User-Agent": "Mozilla/5.0"}
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+        }
+        
         response = requests.get(url, headers=headers, timeout=15)
         
-        price, name = None, symbol
+        # Very basic extraction with minimal dependencies
+        price = None
+        name = symbol
+        
         if response.status_code == 200:
-            # Extract using regex patterns
-            name_match = re.search(r'"shortName":"(.+?)"', response.text)
-            price_match = re.search(r'"regularMarketPrice":{"raw":(\d+\.?\d*),', response.text)
+            html = response.text
             
-            if name_match: name = json.loads(f'"{name_match.group(1)}"')
-            if price_match: price = float(price_match.group(1))
+            # Extract name
+            if '<h1' in html:
+                name_start = html.find('<h1')
+                name_end = html.find('</h1>', name_start)
+                if name_end > 0:
+                    name_content = html[name_start:name_end]
+                    name_parts = name_content.split('>')
+                    if len(name_parts) > 1:
+                        name = name_parts[-1].strip()
+            
+            # Extract price - look for regularMarketPrice
+            price_marker = 'data-field="regularMarketPrice"'
+            if price_marker in html:
+                price_pos = html.find(price_marker)
+                value_attr = 'value="'
+                value_start = html.find(value_attr, price_pos)
+                if value_start > 0:
+                    value_end = html.find('"', value_start + len(value_attr))
+                    if value_end > 0:
+                        try:
+                            price = float(html[value_start + len(value_attr):value_end])
+                        except ValueError:
+                            pass
         
         return {
             "symbol": symbol,
-            "name": name,
+            "name": name if name else symbol,
             "current_price": price,
             "sector": "Unknown",
             "industry": "Unknown"
         }
     except Exception as e:
-        logger.error(f"Scraping failed for {symbol}: {str(e)}")
+        logger.error(f"Error scraping info for {symbol}: {str(e)}")
+        # Return minimal info rather than failing
         return {
             "symbol": symbol,
             "name": symbol,
