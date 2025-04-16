@@ -4,10 +4,9 @@ Enhanced Stock Analysis Web Application
 - Comprehensive analysis with more technical indicators
 - Improved refresh functionality
 - Better error handling and reliability
-- Added chart links for each stock
 """
 
-from flask import Flask, render_template, jsonify, send_from_directory, redirect
+from flask import Flask, render_template, jsonify, send_from_directory
 import requests
 import json
 import os
@@ -90,21 +89,6 @@ html_template = """
             border-radius: 5px;
             margin-top: 10px;
         }
-        .chart-link {
-            color: #0d6efd;
-            text-decoration: none;
-            cursor: pointer;
-        }
-        .chart-link:hover {
-            text-decoration: underline;
-        }
-        .modal-dialog {
-            max-width: 800px;
-        }
-        .chart-container {
-            width: 100%;
-            height: 400px;
-        }
     </style>
 </head>
 <body>
@@ -158,27 +142,6 @@ html_template = """
         </div>
     </div>
     
-    <!-- Chart Modal -->
-    <div class="modal fade" id="chartModal" tabindex="-1" aria-labelledby="chartModalLabel" aria-hidden="true">
-        <div class="modal-dialog modal-lg">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title" id="chartModalLabel">Stock Chart</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-                </div>
-                <div class="modal-body">
-                    <div id="chartContainer" class="chart-container">
-                        <iframe id="chartFrame" width="100%" height="400" frameborder="0"></iframe>
-                    </div>
-                </div>
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
-                    <a id="fullChartLink" href="#" target="_blank" class="btn btn-primary">View Full Chart</a>
-                </div>
-            </div>
-        </div>
-    </div>
-    
     <div class="loading-overlay" id="refreshOverlay">
         <div class="spinner-border text-primary mb-3" role="status">
             <span class="visually-hidden">Loading...</span>
@@ -197,10 +160,6 @@ html_template = """
         const sellCount = document.getElementById('sellCount');
         const errorMessage = document.getElementById('error-message');
         const refreshOverlay = document.getElementById('refreshOverlay');
-        const chartFrame = document.getElementById('chartFrame');
-        const chartModalLabel = document.getElementById('chartModalLabel');
-        const fullChartLink = document.getElementById('fullChartLink');
-        const chartModal = new bootstrap.Modal(document.getElementById('chartModal'));
         
         // Load data on page load
         document.addEventListener('DOMContentLoaded', fetchStocks);
@@ -254,24 +213,6 @@ html_template = """
             errorMessage.style.display = 'block';
         }
         
-        function openChart(symbol, name) {
-            // Set modal title
-            chartModalLabel.textContent = name + ' (' + symbol + ') Chart';
-            
-            // Set chart source
-            const chartUrl = `https://finance.yahoo.com/chart/${symbol}`;
-            const embedUrl = `https://finance.yahoo.com/quote/${symbol}/chart?embedded=true`;
-            
-            // Set the iframe source
-            chartFrame.src = embedUrl;
-            
-            // Update full chart link
-            fullChartLink.href = chartUrl;
-            
-            // Show modal
-            chartModal.show();
-        }
-        
         function displayStocks(data) {
             // Update counts
             buyCount.textContent = data.summary.BUY || 0;
@@ -317,12 +258,7 @@ html_template = """
                         <div class="card-body">
                             <div class="d-flex justify-content-between align-items-start">
                                 <div>
-                                    <h5 class="card-title">
-                                        ${stock.symbol}
-                                        <a class="chart-link" onclick="openChart('${stock.symbol}', '${stock.name || stock.symbol}')">
-                                            <small>(View Chart)</small>
-                                        </a>
-                                    </h5>
+                                    <h5 class="card-title">${stock.symbol}</h5>
                                     <h6 class="card-subtitle mb-2 text-muted">${stock.name || ''}</h6>
                                 </div>
                                 <span class="badge bg-${stock.recommendation === 'BUY' ? 'success' : 
@@ -382,18 +318,7 @@ def get_stock_info(symbol):
         }
         
         response = requests.get(url, headers=headers, timeout=15)
-        
-        # Check if response is JSON before parsing
-        content_type = response.headers.get('Content-Type', '')
-        if 'application/json' not in content_type and 'text/javascript' not in content_type:
-            logger.warning(f"Non-JSON response for {symbol}. Falling back to scraping.")
-            return get_stock_info_by_scraping(symbol)
-            
-        try:
-            data = response.json()
-        except ValueError:
-            logger.warning(f"Invalid JSON for {symbol}. Falling back to scraping.")
-            return get_stock_info_by_scraping(symbol)
+        data = response.json()
         
         if 'quoteResponse' in data and 'result' in data['quoteResponse'] and len(data['quoteResponse']['result']) > 0:
             quote = data['quoteResponse']['result'][0]
@@ -490,18 +415,7 @@ def get_historical_data(symbol, days=14):
         }
         
         response = requests.get(url, headers=headers, timeout=15)
-        
-        # Check if response is JSON before parsing
-        content_type = response.headers.get('Content-Type', '')
-        if 'application/json' not in content_type and 'text/javascript' not in content_type:
-            logger.warning(f"Non-JSON response for historical data of {symbol}. Using fallback data.")
-            return calculate_fallback_data(symbol)
-            
-        try:
-            data = response.json()
-        except ValueError:
-            logger.warning(f"Invalid JSON for historical data of {symbol}. Using fallback data.")
-            return calculate_fallback_data(symbol)
+        data = response.json()
         
         if "chart" not in data or "result" not in data["chart"] or not data["chart"]["result"]:
             return calculate_fallback_data(symbol)
