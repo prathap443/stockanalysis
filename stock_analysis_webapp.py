@@ -131,6 +131,16 @@ html_template = """
     </style>
 </head>
 <body>
+<div class="text-end small text-muted" id="lastUpdated"></div>
+<!-- Dashboard Content -->
+<div id="dashboardContent">
+    <div class="text-center py-5">
+        <div class="spinner-border text-primary" role="status">
+            <span class="visually-hidden">Loading...</span>
+        </div>
+        <p class="mt-2">Loading market data...</p>
+    </div>
+</div>
     <div class="container my-4">
         <div class="d-flex justify-content-between align-items-center mb-4">
             <div>
