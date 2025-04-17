@@ -66,53 +66,117 @@ html_template = """
 <!DOCTYPE html>
 <html lang="en" data-theme="light">
 <head>
-    <!-- Keep head section the same -->
+    <meta charset="UTF-8">
+    <title>Stock Analytics - Prathap's Analysis</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {
+            background: #f0f2f5;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        .stock-card {
+            backdrop-filter: blur(10px);
+            background: rgba(255, 255, 255, 0.7);
+            border-radius: 15px;
+            padding: 15px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.1);
+            transition: transform 0.2s;
+        }
+        .stock-card:hover {
+            transform: translateY(-5px);
+        }
+        .fade-in {
+            animation: fadeIn 0.6s ease-in-out;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to   { opacity: 1; }
+        }
+    </style>
 </head>
 <body>
     <div class="container my-4">
-        <!-- Moved lastUpdated to header section -->
         <div class="d-flex justify-content-between align-items-center mb-4">
             <div>
-                <h1 class="display-5 mb-1">📈 Stock Analytics-Prathap's Analysis</h1>
+                <h1 class="display-5 mb-1">📈 Stock Analytics - Prathap's Analysis</h1>
                 <p class="text-muted">Real-time analysis of top market performers</p>
                 <div class="text-end small text-muted" id="lastUpdated"></div>
             </div>
-            <button class="theme-toggle btn btn-outline-secondary" onclick="toggleTheme()">
-                🌓 Toggle Theme
-            </button>
+            <button class="btn btn-outline-secondary" onclick="toggleTheme()">🌓 Toggle Theme</button>
         </div>
 
-        <!-- Controls - Adjusted grid layout -->
         <div class="row g-3 mb-4 fade-in">
-            <div class="col-12 col-md-4">
+            <div class="col-md-4">
                 <input type="text" class="form-control" placeholder="🔍 Search stocks..." id="stockSearch">
             </div>
-            <div class="col-6 col-md-3">
+            <div class="col-md-4">
                 <select class="form-select" id="sectorFilter">
-                    <!-- options same -->
+                    <option value="">All Sectors</option>
                 </select>
             </div>
-            <div class="col-6 col-md-3">
-                <select class="form-select" id="volatilityFilter">
-                    <!-- options same -->
-                </select>
-            </div>
-            <div class="col-12 col-md-2">
+            <div class="col-md-4">
                 <button id="refreshBtn" class="btn btn-primary w-100">🔄 Refresh</button>
             </div>
         </div>
 
-        <!-- Dashboard Content -->
-        <div id="dashboardContent"></div>
+        <div id="dashboardContent" class="row g-4"></div>
     </div>
 
     <script>
-        // Added chart rendering function
+        async function loadDashboard() {
+            try {
+                const response = await fetch('/api/stocks?t=' + Date.now());
+                const data = await response.json();
+                if (data && data.stocks) {
+                    document.getElementById("dashboardContent").innerHTML = '';
+                    renderStocks(data.stocks);
+                    document.getElementById("lastUpdated").innerText = `Last updated: ${data.last_updated}`;
+                } else {
+                    document.getElementById("dashboardContent").innerHTML = '<p class="text-danger">No data available.</p>';
+                }
+            } catch (error) {
+                document.getElementById("dashboardContent").innerHTML = `<p class="text-danger">Error loading data: ${error}</p>`;
+            }
+        }
+
+        function renderStocks(stocks) {
+            let stocksHtml = '';
+            stocks.forEach((stock, index) => {
+                const trendColor = stock.percent_change_2w >= 0 ? 'text-success' : 'text-danger';
+                const trendIcon = stock.percent_change_2w >= 0 ? '↑' : '↓';
+                const chartId = `chart-${index}`;
+                stocksHtml += `
+                    <div class="col-md-6 col-lg-4">
+                        <div class="stock-card">
+                            <div class="mb-2 d-flex justify-content-between">
+                                <div>
+                                    <h5>${stock.symbol}</h5>
+                                    <small class="text-muted">${stock.name}</small>
+                                </div>
+                                <div class="text-end ${trendColor}">
+                                    <strong>${trendIcon}${stock.percent_change_2w.toFixed(2)}%</strong><br>
+                                    <small>${stock.recommendation}</small>
+                                </div>
+                            </div>
+                            <canvas id="${chartId}" height="100"></canvas>
+                        </div>
+                    </div>
+                `;
+            });
+            document.getElementById("dashboardContent").innerHTML = stocksHtml;
+            stocks.forEach((stock, index) => {
+                if(stock.history_14d?.length > 0) {
+                    renderStockChart(`chart-${index}`, stock.history_14d);
+                }
+            });
+        }
+
         function renderStockChart(canvasId, historyData) {
             const ctx = document.getElementById(canvasId).getContext('2d');
             const dates = historyData.map(item => item.date);
             const prices = historyData.map(item => item.close);
-            
             new Chart(ctx, {
                 type: 'line',
                 data: {
@@ -138,56 +202,16 @@ html_template = """
             });
         }
 
-        // Modified renderStocks function to include charts
-        function renderStocks(stocks) {
-            let stocksHtml = '<div class="row g-4">';
-            
-            stocks.forEach((stock, index) => {
-                const trendColor = stock.percent_change_2w >= 0 ? 'text-success' : 'text-danger';
-                const trendIcon = stock.percent_change_2w >= 0 ? '↑' : '↓';
-                const chartId = `chart-${index}`;
-                
-                stocksHtml += `
-                    <div class="col-md-6 col-lg-4">
-                        <div class="card stock-card fade-in">
-                            <div class="card-body">
-                                <!-- Header section same -->
-                                
-                                <!-- Price section same -->
-                                
-                                <!-- 14-day trend chart -->
-                                <div class="position-relative mb-3" style="height: 80px">
-                                    <canvas id="${chartId}"></canvas>
-                                </div>
-                                
-                                <!-- Indicators and news same -->
-                            </div>
-                        </div>
-                    </div>
-                `;
-            });
-
-            stocksHtml += '</div>';
-            document.getElementById('dashboardContent').innerHTML += stocksHtml;
-
-            // Render charts after DOM update
-            stocks.forEach((stock, index) => {
-                if(stock.history_14d?.length > 0) {
-                    renderStockChart(`chart-${index}`, stock.history_14d);
-                }
-            });
+        function toggleTheme() {
+            const current = document.documentElement.getAttribute('data-theme');
+            document.documentElement.setAttribute('data-theme', current === 'light' ? 'dark' : 'light');
         }
 
-        // Modified refresh function to handle cache
-        async function loadDashboard() {
-            try {
-                const response = await fetch('/api/stocks?t=' + Date.now());
-                // ... rest of the function same
-            }
-        }
+        document.addEventListener("DOMContentLoaded", loadDashboard);
     </script>
 </body>
 </html>
+
 """
 
 # Write HTML template to file
