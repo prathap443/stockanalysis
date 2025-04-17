@@ -2,3 +2,8 @@ flask
 requests
 beautifulsoup4
 gunicorn
+numpy
+pandas
+joblib
+scikit-learn
+textblob
