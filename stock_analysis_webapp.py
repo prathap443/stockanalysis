@@ -14,6 +14,11 @@ from datetime import datetime, timedelta
 import logging
 import random
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import joblib
+import numpy as np
+
+model = joblib.load("model/stock_predictor.pkl")
+label_encoder = joblib.load("model/label_encoder.pkl")
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, 
@@ -602,112 +607,43 @@ def get_news_sentiment(symbol):
         return None
 
 def analyze_stock(symbol):
-    """Analyze a stock with comprehensive indicators"""
     try:
-        # Get basic info
+        # Get all required data
         info = get_stock_info(symbol)
-        
-        # Get historical data
         history = get_historical_data(symbol)
-        
-        # Get news sentiment
         news_sentiment = get_news_sentiment(symbol)
-        
-        # Get 14-day price history for charts
         history_14d = get_14d_history(symbol)
-        
-        # Initialize with data from either source
+
         current_price = history.get("current_price") or info.get("current_price")
         percent_change = history.get("percent_change_2w", 0)
         volatility = history.get("volatility", 5)
-        
-        # Set default technical indicators if not available
+
+        # Extract and clean indicators
         technical_indicators = history.get("technical_indicators", {})
-        if not technical_indicators:
-            technical_indicators = {
-                "rsi": "N/A",
-                "macd": "N/A",
-                "volume_analysis": "N/A",
-                "trend": "N/A"
-            }
-        
-        # Determine recommendation based on comprehensive analysis
-        recommendation = "HOLD"
-        reason = ""
-        factors = []
-        
-        # Initialize counters
-        bullish_signals = 0
-        bearish_signals = 0
+        rsi_str = str(technical_indicators.get("rsi", "50"))
+        macd_str = str(technical_indicators.get("macd", "0"))
 
-        # === Price Momentum ===
-        if percent_change > 10:
-            factors.append(f"Strong upward momentum (+{percent_change:.2f}%)")
-            bullish_signals += 2
-        elif percent_change > 5:
-            factors.append(f"Good upward momentum (+{percent_change:.2f}%)")
-            bullish_signals += 1
-        elif percent_change < -10:
-            factors.append(f"Significant price drop ({percent_change:.2f}%)")
-            bearish_signals += 2
-        elif percent_change < -5:
-            factors.append(f"Moderate price drop ({percent_change:.2f}%)")
-            bearish_signals += 1
+        rsi = float(rsi_str.split("(")[-1].replace(")", "") or 50)
+        macd = float(macd_str.split("(")[-1].replace(")", "") or 0)
+        volume_score = 1 if "Increasing" in technical_indicators.get("volume_analysis", "") else 0
+        sentiment_score = 0  # You can enhance this later with real sentiment analysis
 
-        # === RSI Indicator ===
-        rsi = str(technical_indicators.get("rsi") or "")
-        if "Overbought" in rsi:
-            factors.append("RSI indicates overbought conditions")
-            bearish_signals += 1
-        elif "Oversold" in rsi:
-            factors.append("RSI indicates oversold conditions")
-            bullish_signals += 1
+        # Prepare feature array
+        features = np.array([[rsi, macd, volume_score, percent_change, sentiment_score, volatility]])
 
-        # === MACD Indicator ===
-        macd = str(technical_indicators.get("macd") or "")
-        if "Bullish" in macd:
-            factors.append("MACD shows bullish momentum")
-            bullish_signals += 1
-        elif "Bearish" in macd:
-            factors.append("MACD shows bearish momentum")
-            bearish_signals += 1
+        # Predict using trained model
+        pred = model.predict(features)[0]
+        recommendation = label_encoder.inverse_transform([pred])[0]
 
-        # === Volume ===
-        volume_analysis = str(technical_indicators.get("volume_analysis") or "")
-        if "Increasing (High)" in volume_analysis:
-            factors.append("Trading volume is increasing significantly")
-            bullish_signals += 1
-        elif "Decreasing (High)" in volume_analysis:
-            factors.append("Trading volume is decreasing significantly")
-            bearish_signals += 1
+        # Compose reason
+        reason = (
+            f"🤖 ML-based prediction using "
+            f"RSI={rsi:.1f}, MACD={macd:.2f}, Change={percent_change:.2f}%, "
+            f"Volatility={volatility:.2f}, Volume={volume_score}"
+        )
 
-        # === Trend ===
-        trend = str(technical_indicators.get("trend") or "")
-        if trend == "Bullish":
-            factors.append("Overall technical trend is bullish")
-            bullish_signals += 1
-        elif trend == "Bearish":
-            factors.append("Overall technical trend is bearish")
-            bearish_signals += 1
+        logger.info(f"{symbol} → ML RECOMMEND: {recommendation}")
 
-        # === Final Decision ===
-        # Fix 3: Modified recommendation logic to prioritize recent trends
-        if bullish_signals >= 2 and bullish_signals > bearish_signals:
-            recommendation = "BUY"
-            reason = "Multiple bullish indicators suggest a buying opportunity."
-        elif bearish_signals >= 3 and bearish_signals > bullish_signals:
-            recommendation = "SELL"
-            reason = "Multiple bearish indicators suggest considering selling."
-        else:
-            recommendation = "HOLD"
-            reason = "Mixed signals suggest maintaining current position."
-
-        if factors:
-            reason += " Based on: " + ", ".join(factors) + "."
-
-        # Log debug details
-        logger.info(f"{symbol} → RECOMMEND: {recommendation} | ↑{bullish_signals}, ↓{bearish_signals} | Factors: {factors}")
-        
         return {
             "symbol": symbol,
             "name": info.get("name", symbol),
@@ -719,24 +655,23 @@ def analyze_stock(symbol):
             "news_sentiment": news_sentiment,
             "history_14d": history_14d
         }
+
     except Exception as e:
         logger.error(f"Error analyzing {symbol}: {str(e)}")
-        # Return basic entry on error
         return {
             "symbol": symbol,
             "name": symbol,
             "recommendation": "HOLD",
             "percent_change_2w": 0,
             "current_price": 100.0,
-            "reason": "Analysis unavailable. Maintain current position.",
+            "reason": "⚠️ Analysis failed. Defaulting to HOLD.",
             "technical_indicators": {
-                "rsi": "N/A",
-                "macd": "N/A",
-                "volume_analysis": "N/A",
-                "trend": "N/A"
+                "rsi": "N/A", "macd": "N/A", 
+                "volume_analysis": "N/A", "trend": "N/A"
             },
             "history_14d": []
         }
+
 
 def analyze_all_stocks():
     """Analyze all 20 stocks in parallel with optimized API calls"""
