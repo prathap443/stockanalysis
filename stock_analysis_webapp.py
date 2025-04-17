@@ -5,7 +5,7 @@
 # - Better error handling and reliability
 # - 14-day trend charts
 
-from flask import Flask, render_template, jsonify, send_from_directory
+from flask import Flask, render_template, jsonify, request
 import requests
 import json
 import os
@@ -16,6 +16,7 @@ import random
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import joblib
 import numpy as np
+from textblob import TextBlob  # For basic sentiment analysis
 
 model = joblib.load("model/stock_predictor.pkl")
 label_encoder = joblib.load("model/label_encoder.pkl")
@@ -588,23 +589,32 @@ def analyze_volume(volumes):
         return "Decreasing (Moderate)"
     else:
         return "Stable"
+@app.route("/retrain", methods=["POST"])
+def retrain_model():
+    try:
+        import train_model  # Assuming train_model.py has the retraining logic
+        return jsonify({"success": True, "message": "Model retrained successfully."})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)})
 
 def get_news_sentiment(symbol):
-    """Get news sentiment for a stock"""
     try:
-        # Basic random sentiment for demonstration
-        sentiments = [
-            "Positive - Recent news indicates strong growth potential",
-            "Negative - Recent announcements causing investor concerns",
-            "Neutral - No significant news affecting stock direction",
-            "Positive - Analyst upgrades and favorable industry trends",
-            "Negative - Sector headwinds and competitive pressures noted",
-            "Neutral - Mixed signals from recent earnings and forecasts"
-        ]
-        return random.choice(sentiments)
+        url = f"https://query1.finance.yahoo.com/v1/finance/search?q={symbol}"
+        headers = {"User-Agent": "Mozilla/5.0"}
+        response = requests.get(url, headers=headers)
+        data = response.json()
+
+        articles = data.get("quotes", [])[:5]
+        texts = [a.get("shortname", "") for a in articles]
+        full_text = " ".join(texts)
+
+        if full_text:
+            score = TextBlob(full_text).sentiment.polarity  # -1 to 1
+            return score
+        return 0
     except Exception as e:
-        logger.error(f"Error getting news for {symbol}: {str(e)}")
-        return None
+        logger.warning(f"News sentiment error for {symbol}: {e}")
+        return 0
 
 def analyze_stock(symbol):
     try:
