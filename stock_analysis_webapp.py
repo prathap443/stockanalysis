@@ -692,7 +692,7 @@ def analyze_stock(symbol):
 
         # === Final Decision ===
         # Fix 3: Modified recommendation logic to prioritize recent trends
-        if bullish_signals >= 3 and bullish_signals > bearish_signals:
+        if bullish_signals >= 2 and bullish_signals > bearish_signals:
             recommendation = "BUY"
             reason = "Multiple bullish indicators suggest a buying opportunity."
         elif bearish_signals >= 3 and bearish_signals > bullish_signals:
