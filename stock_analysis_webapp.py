@@ -446,9 +446,32 @@ def get_historical_data(symbol, days=14):
         volatility = (volatility / len(daily_returns))**0.5 if daily_returns else 0
         
         # Calculate technical indicators
-        rsi = calculate_rsi(prices) if len(prices) >= 14 else None
-        macd = calculate_macd(prices) if len(prices) >= 26 else None
-        volume_trend = analyze_volume(volumes) if volumes and len(volumes) > 5 else None
+        rsi = calculate_rsi(prices)
+        macd = calculate_macd(prices)
+        volume_trend = analyze_volume(volumes)
+        
+        # Determine overall trend
+        trend = "Neutral"
+        bullish_signals = 0
+        bearish_signals = 0
+        
+        # Count signals for trend determination
+        if "Oversold" in rsi: bullish_signals += 1
+        elif "Overbought" in rsi: bearish_signals += 1
+        
+        if "Bullish" in macd: bullish_signals += 1
+        elif "Bearish" in macd: bearish_signals += 1
+        
+        if percent_change > 5: bullish_signals += 1
+        elif percent_change < -5: bearish_signals += 1
+        
+        if "Increasing" in volume_trend: bullish_signals += 1
+        elif "Decreasing" in volume_trend: bearish_signals += 1
+        
+        if bullish_signals > bearish_signals:
+            trend = "Bullish"
+        elif bearish_signals > bullish_signals:
+            trend = "Bearish"
         
         return {
             "symbol": symbol,
@@ -464,7 +487,8 @@ def get_historical_data(symbol, days=14):
             "technical_indicators": {
                 "rsi": rsi,
                 "macd": macd,
-                "volume_analysis": volume_trend
+                "volume_analysis": volume_trend,
+                "trend": trend
             }
         }
     except Exception as e:
@@ -487,34 +511,38 @@ def calculate_fallback_data(symbol):
     }
 
 def calculate_rsi(prices, periods=14):
-    """Calculate Relative Strength Index"""
-    if len(prices) < periods + 1:
-        return "N/A"
-    
-    # Calculate price changes
-    deltas = [prices[i] - prices[i-1] for i in range(1, len(prices))]
-    
-    # Separate gains and losses
-    gains = [delta if delta > 0 else 0 for delta in deltas]
-    losses = [-delta if delta < 0 else 0 for delta in deltas]
-    
-    # Calculate average gains and losses over the RSI period
-    avg_gain = sum(gains[-periods:]) / periods
-    avg_loss = sum(losses[-periods:]) / periods
-    
-    if avg_loss == 0:
-        return "Overbought (100)"
-    
-    # Calculate RS and RSI
-    rs = avg_gain / avg_loss
-    rsi = 100 - (100 / (1 + rs))
-    
-    if rsi > 70:
-        return f"Overbought ({rsi:.1f})"
-    elif rsi < 30:
-        return f"Oversold ({rsi:.1f})"
-    else:
-        return f"Neutral ({rsi:.1f})"
+    """Calculate Relative Strength Index with improved error handling"""
+    try:
+        if len(prices) < periods + 1:
+            return "Neutral (N/A)"
+        
+        # Calculate price changes
+        deltas = [prices[i] - prices[i-1] for i in range(1, len(prices))]
+        
+        # Separate gains and losses
+        gains = [delta if delta > 0 else 0 for delta in deltas]
+        losses = [-delta if delta < 0 else 0 for delta in deltas]
+        
+        # Calculate average gains and losses over the RSI period
+        avg_gain = sum(gains[-periods:]) / periods
+        avg_loss = sum(losses[-periods:]) / periods
+        
+        if avg_loss == 0:
+            return "Overbought (100.0)"
+        
+        # Calculate RS and RSI
+        rs = avg_gain / avg_loss
+        rsi = 100 - (100 / (1 + rs))
+        
+        if rsi > 70:
+            return f"Overbought ({rsi:.1f})"
+        elif rsi < 30:
+            return f"Oversold ({rsi:.1f})"
+        else:
+            return f"Neutral ({rsi:.1f})"
+    except Exception as e:
+        logger.error(f"Error calculating RSI: {str(e)}")
+        return "Neutral (Error)"
 
 def calculate_macd(prices):
     """Calculate Moving Average Convergence Divergence"""
@@ -611,37 +639,14 @@ def analyze_stock(symbol):
                 "trend": "N/A"
             }
         
-        # Add overall trend based on multiple indicators
-        if "trend" not in technical_indicators:
-            trend = "Neutral"
-            rsi_value = technical_indicators.get("rsi", "")
-            macd_value = technical_indicators.get("macd", "")
-            
-            bullish_signals = 0
-            bearish_signals = 0
-            
-            # Count bullish signals
-            if "Oversold" in str(rsi_value): bullish_signals += 1
-            if "Bullish" in str(macd_value): bullish_signals += 1
-            if percent_change < -7: bullish_signals += 1  # Potential buying opportunity
-            
-            # Count bearish signals
-            if "Overbought" in str(rsi_value): bearish_signals += 1
-            if "Bearish" in str(macd_value): bearish_signals += 1
-            if percent_change > 7: bearish_signals += 1  # Potential selling opportunity
-            
-            if bullish_signals > bearish_signals:
-                trend = "Bullish"
-            elif bearish_signals > bullish_signals:
-                trend = "Bearish"
-            
-            technical_indicators["trend"] = trend
-        
         # Determine recommendation based on comprehensive analysis
-        # --- Determine recommendation based on comprehensive analysis ---
         recommendation = "HOLD"
         reason = ""
         factors = []
+        
+        # Initialize counters
+        bullish_signals = 0
+        bearish_signals = 0
 
         # === Price Momentum ===
         if percent_change > 10:
@@ -658,7 +663,7 @@ def analyze_stock(symbol):
             bearish_signals += 1
 
         # === RSI Indicator ===
-        rsi = technical_indicators.get("rsi", "")
+        rsi = str(technical_indicators.get("rsi") or "")
         if "Overbought" in rsi:
             factors.append("RSI indicates overbought conditions")
             bearish_signals += 1
@@ -667,7 +672,7 @@ def analyze_stock(symbol):
             bullish_signals += 1
 
         # === MACD Indicator ===
-        macd = technical_indicators.get("macd", "")
+        macd = str(technical_indicators.get("macd") or "")
         if "Bullish" in macd:
             factors.append("MACD shows bullish momentum")
             bullish_signals += 1
@@ -676,7 +681,7 @@ def analyze_stock(symbol):
             bearish_signals += 1
 
         # === Volume ===
-        volume_analysis = technical_indicators.get("volume_analysis", "")
+        volume_analysis = str(technical_indicators.get("volume_analysis") or "")
         if "Increasing (High)" in volume_analysis:
             factors.append("Trading volume is increasing significantly")
             bullish_signals += 1
@@ -685,7 +690,7 @@ def analyze_stock(symbol):
             bearish_signals += 1
 
         # === Trend ===
-        trend = technical_indicators.get("trend", "")
+        trend = str(technical_indicators.get("trend") or "")
         if trend == "Bullish":
             factors.append("Overall technical trend is bullish")
             bullish_signals += 1
@@ -694,10 +699,11 @@ def analyze_stock(symbol):
             bearish_signals += 1
 
         # === Final Decision ===
-        if bullish_signals >= 3 and percent_change > 5:
+        # Fix 3: Modified recommendation logic to prioritize recent trends
+        if bullish_signals >= 3 and bullish_signals > bearish_signals:
             recommendation = "BUY"
             reason = "Multiple bullish indicators suggest a buying opportunity."
-        elif bearish_signals >= 3 and percent_change < -2:
+        elif bearish_signals >= 3 and bearish_signals > bullish_signals:
             recommendation = "SELL"
             reason = "Multiple bearish indicators suggest considering selling."
         else:
@@ -709,7 +715,6 @@ def analyze_stock(symbol):
 
         # Log debug details
         logger.info(f"{symbol} → RECOMMEND: {recommendation} | ↑{bullish_signals}, ↓{bearish_signals} | Factors: {factors}")
-
         
         return {
             "symbol": symbol,
