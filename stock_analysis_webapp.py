@@ -1,11 +1,9 @@
-"""
-Enhanced Stock Analysis Web Application
-- Analyzes top 20 stocks
-- Comprehensive analysis with more technical indicators
-- Improved refresh functionality
-- Better error handling and reliability
-- 14-day trend charts
-"""
+# Enhanced Stock Analysis Web Application
+# - Analyzes top 20 stocks
+# - Comprehensive analysis with more technical indicators
+# - Improved refresh functionality
+# - Better error handling and reliability
+# - 14-day trend charts
 
 from flask import Flask, render_template, jsonify, send_from_directory
 import requests
@@ -16,7 +14,6 @@ from datetime import datetime, timedelta
 import logging
 import random
 from concurrent.futures import ThreadPoolExecutor, as_completed
-# Removed numpy import as it's not used
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, 
@@ -30,36 +27,31 @@ app = Flask(__name__)
 os.makedirs('templates', exist_ok=True)
 os.makedirs('data', exist_ok=True)
 
-# Expanded list of 20 major stocks
-STOCK_LIST = [
+# Base STOCK_LIST (20 majors)
+base_stocks = [
     "AAPL", "MSFT", "GOOGL", "AMZN", "META", 
     "TSLA", "NVDA", "JPM", "V", "WMT", 
     "DIS", "NFLX", "PYPL", "INTC", "AMD", 
     "BA", "PFE", "KO", "PEP", "XOM"
 ]
 
-
-
-# Setup logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
-
-# Initialize Flask app
-app = Flask(__name__)
-
-# Create directories
-os.makedirs('templates', exist_ok=True)
-os.makedirs('data', exist_ok=True)
-
-STOCK_LIST = [
-    "AAPL", "MSFT", "GOOGL", "AMZN", "META", 
-    "TSLA", "NVDA", "JPM", "V", "WMT", 
-    "DIS", "NFLX", "PYPL", "INTC", "AMD", 
-    "BA", "PFE", "KO", "PEP", "XOM"
+# Top 10 AI-related stocks
+AI_STOCKS = [
+    "NVDA", "AMD", "GOOGL", "MSFT", "META",
+    "TSLA", "AMZN", "IBM", "BIDU", "PLTR"
 ]
+
+# Top 20 tech-related stocks
+TECH_STOCKS = [
+    "AAPL", "MSFT", "GOOGL", "AMZN", "META",
+    "TSLA", "NVDA", "AMD", "INTC", "IBM",
+    "CRM", "ORCL", "ADBE", "CSCO", "QCOM",
+    "SAP", "TXN", "AVGO", "SNOW", "SHOP"
+]
+
+# Merge all and remove duplicates
+STOCK_LIST = sorted(set(base_stocks + AI_STOCKS + TECH_STOCKS))
+logger.info(f"Final STOCK_LIST contains {len(STOCK_LIST)} symbols.")
 
 # Modern HTML template with glassmorphism design
 html_template = """
