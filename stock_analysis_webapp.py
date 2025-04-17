@@ -638,63 +638,78 @@ def analyze_stock(symbol):
             technical_indicators["trend"] = trend
         
         # Determine recommendation based on comprehensive analysis
-        recommendation = "HOLD"  # Default recommendation
+        # --- Determine recommendation based on comprehensive analysis ---
+        recommendation = "HOLD"
         reason = ""
-        
-        # Factors influencing the decision
         factors = []
-        
-        # Price momentum
+
+        # === Price Momentum ===
         if percent_change > 10:
             factors.append(f"Strong upward momentum (+{percent_change:.2f}%)")
+            bullish_signals += 2
         elif percent_change > 5:
             factors.append(f"Good upward momentum (+{percent_change:.2f}%)")
+            bullish_signals += 1
         elif percent_change < -10:
             factors.append(f"Significant price drop ({percent_change:.2f}%)")
+            bearish_signals += 2
         elif percent_change < -5:
             factors.append(f"Moderate price drop ({percent_change:.2f}%)")
-        
-        # Technical indicators
-        if "Overbought" in str(technical_indicators.get("rsi", "")):
+            bearish_signals += 1
+
+        # === RSI Indicator ===
+        rsi = technical_indicators.get("rsi", "")
+        if "Overbought" in rsi:
             factors.append("RSI indicates overbought conditions")
-        elif "Oversold" in str(technical_indicators.get("rsi", "")):
+            bearish_signals += 1
+        elif "Oversold" in rsi:
             factors.append("RSI indicates oversold conditions")
-        
-        if "Bullish" in str(technical_indicators.get("macd", "")):
+            bullish_signals += 1
+
+        # === MACD Indicator ===
+        macd = technical_indicators.get("macd", "")
+        if "Bullish" in macd:
             factors.append("MACD shows bullish momentum")
-        elif "Bearish" in str(technical_indicators.get("macd", "")):
+            bullish_signals += 1
+        elif "Bearish" in macd:
             factors.append("MACD shows bearish momentum")
-        
-        # Volume analysis
+            bearish_signals += 1
+
+        # === Volume ===
         volume_analysis = technical_indicators.get("volume_analysis", "")
-        if "Increasing (High)" in str(volume_analysis):
+        if "Increasing (High)" in volume_analysis:
             factors.append("Trading volume is increasing significantly")
-        elif "Decreasing (High)" in str(volume_analysis):
+            bullish_signals += 1
+        elif "Decreasing (High)" in volume_analysis:
             factors.append("Trading volume is decreasing significantly")
-        
-        # Overall trend
-        if technical_indicators.get("trend") == "Bullish":
+            bearish_signals += 1
+
+        # === Trend ===
+        trend = technical_indicators.get("trend", "")
+        if trend == "Bullish":
             factors.append("Overall technical trend is bullish")
-        elif technical_indicators.get("trend") == "Bearish":
+            bullish_signals += 1
+        elif trend == "Bearish":
             factors.append("Overall technical trend is bearish")
-        
-        # Make recommendation based on all factors
-        bullish_count = sum(1 for f in factors if any(b in f for b in ["upward", "bullish", "oversold", "increasing"]))
-        bearish_count = sum(1 for f in factors if any(b in f for b in ["drop", "overbought", "bearish", "decreasing"]))
-        
-        if bullish_count > bearish_count:
+            bearish_signals += 1
+
+        # === Final Decision ===
+        if bullish_signals >= 3 and percent_change > 5:
             recommendation = "BUY"
-            reason = "Multiple bullish indicators suggest buying opportunity."
-        elif bearish_count > bullish_count:
+            reason = "Multiple bullish indicators suggest a buying opportunity."
+        elif bearish_signals >= 3 and percent_change < -2:
             recommendation = "SELL"
             reason = "Multiple bearish indicators suggest considering selling."
         else:
             recommendation = "HOLD"
             reason = "Mixed signals suggest maintaining current position."
-        
-        # Add details to the reason
+
         if factors:
             reason += " Based on: " + ", ".join(factors) + "."
+
+        # Log debug details
+        logger.info(f"{symbol} → RECOMMEND: {recommendation} | ↑{bullish_signals}, ↓{bearish_signals} | Factors: {factors}")
+
         
         return {
             "symbol": symbol,
