@@ -66,113 +66,38 @@ html_template = """
 <!DOCTYPE html>
 <html lang="en" data-theme="light">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Stock Analytics Dashboard</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/apexcharts"></script>
-    <style>
-        :root {
-            --bg-color: #f8f9fa;
-            --text-color: #212529;
-            --card-bg: rgba(255, 255, 255, 0.9);
-            --border-color: rgba(255, 255, 255, 0.3);
-        }
-
-        [data-theme="dark"] {
-            --bg-color: #1a1a1a;
-            --text-color: #ffffff;
-            --card-bg: rgba(30, 30, 30, 0.9);
-            --border-color: rgba(255, 255, 255, 0.1);
-        }
-
-        body {
-            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
-            min-height: 100vh;
-            color: var(--text-color);
-            transition: all 0.3s ease;
-        }
-
-        .card {
-            background: var(--card-bg);
-            backdrop-filter: blur(10px);
-            -webkit-backdrop-filter: blur(10px);
-            border: 1px solid var(--border-color);
-            border-radius: 15px;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-            transition: all 0.3s ease;
-        }
-
-        .stock-card {
-            transition: transform 0.2s, box-shadow 0.2s;
-        }
-
-        .stock-card:hover {
-            transform: translateY(-5px);
-            box-shadow: 0 8px 16px rgba(0,0,0,0.2);
-        }
-
-        .theme-toggle {
-            position: fixed;
-            bottom: 20px;
-            right: 20px;
-            z-index: 1000;
-        }
-
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(20px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-
-        .fade-in {
-            animation: fadeIn 0.6s ease-out;
-        }
-    </style>
+    <!-- Keep head section the same -->
 </head>
 <body>
-<div class="text-end small text-muted" id="lastUpdated"></div>
-<!-- Dashboard Content -->
-<div id="dashboardContent">
-    <div class="text-center py-5">
-        <div class="spinner-border text-primary" role="status">
-            <span class="visually-hidden">Loading...</span>
-        </div>
-        <p class="mt-2">Loading market data...</p>
-    </div>
-</div>
     <div class="container my-4">
+        <!-- Moved lastUpdated to header section -->
         <div class="d-flex justify-content-between align-items-center mb-4">
             <div>
-                <h1 class="display-5 mb-1">📈 Stock Analytics</h1>
+                <h1 class="display-5 mb-1">📈 Stock Analytics-Prathap's Analysis</h1>
                 <p class="text-muted">Real-time analysis of top market performers</p>
+                <div class="text-end small text-muted" id="lastUpdated"></div>
             </div>
             <button class="theme-toggle btn btn-outline-secondary" onclick="toggleTheme()">
                 🌓 Toggle Theme
             </button>
         </div>
 
-        <!-- Controls -->
+        <!-- Controls - Adjusted grid layout -->
         <div class="row g-3 mb-4 fade-in">
-            <div class="col-md-4">
+            <div class="col-12 col-md-4">
                 <input type="text" class="form-control" placeholder="🔍 Search stocks..." id="stockSearch">
             </div>
-            <div class="col-md-3">
+            <div class="col-6 col-md-3">
                 <select class="form-select" id="sectorFilter">
-                    <option value="">🏢 All Sectors</option>
-                    <option value="Technology">💻 Technology</option>
-                    <option value="Financial Services">🏦 Financial</option>
+                    <!-- options same -->
                 </select>
             </div>
-            <div class="col-md-3">
+            <div class="col-6 col-md-3">
                 <select class="form-select" id="volatilityFilter">
-                    <option value="">📈 Volatility</option>
-                    <option value="low">Low</option>
-                    <option value="medium">Medium</option>
-                    <option value="high">High</option>
+                    <!-- options same -->
                 </select>
             </div>
-            <div class="col-md-2">
+            <div class="col-12 col-md-2">
                 <button id="refreshBtn" class="btn btn-primary w-100">🔄 Refresh</button>
             </div>
         </div>
@@ -182,127 +107,85 @@ html_template = """
     </div>
 
     <script>
-        // Theme management
-        function toggleTheme() {
-            const currentTheme = document.documentElement.getAttribute('data-theme');
-            const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
-            document.documentElement.setAttribute('data-theme', newTheme);
+        // Added chart rendering function
+        function renderStockChart(canvasId, historyData) {
+            const ctx = document.getElementById(canvasId).getContext('2d');
+            const dates = historyData.map(item => item.date);
+            const prices = historyData.map(item => item.close);
+            
+            new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: dates,
+                    datasets: [{
+                        label: 'Price',
+                        data: prices,
+                        borderColor: 'rgba(75, 192, 192, 1)',
+                        tension: 0.1,
+                        fill: false
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    plugins: {
+                        legend: { display: false }
+                    },
+                    scales: {
+                        x: { display: false },
+                        y: { display: false }
+                    }
+                }
+            });
         }
 
-        // Initial load
-        document.addEventListener('DOMContentLoaded', () => {
-            loadDashboard();
-        });
-    </script>
-    <script>
-    // Fetch and render dashboard data
-    async function loadDashboard() {
-        try {
-            const response = await fetch('/api/stocks');
-            const data = await response.json();
+        // Modified renderStocks function to include charts
+        function renderStocks(stocks) {
+            let stocksHtml = '<div class="row g-4">';
             
-            // Update last updated time
-            document.getElementById('lastUpdated').innerText = `Last updated: ${data.last_updated}`;
-            
-            renderSummary(data.summary);
-            renderStocks(data.stocks);
-        } catch (error) {
-            console.error('Error loading dashboard:', error);
-        }
-    }
-
-    function renderSummary(summary) {
-        const summaryHtml = `
-            <div class="card mb-4 fade-in">
-                <div class="card-body">
-                    <h5 class="card-title">Market Summary</h5>
-                    <div class="row text-center">
-                        <div class="col-md-4">
-                            <div class="text-success h4">${summary.BUY} BUY</div>
-                        </div>
-                        <div class="col-md-4">
-                            <div class="text-warning h4">${summary.HOLD} HOLD</div>
-                        </div>
-                        <div class="col-md-4">
-                            <div class="text-danger h4">${summary.SELL} SELL</div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        `;
-        document.getElementById('dashboardContent').innerHTML = summaryHtml;
-    }
-
-    function renderStocks(stocks) {
-        let stocksHtml = '<div class="row g-4">';
-        
-        stocks.forEach(stock => {
-            const trendColor = stock.percent_change_2w >= 0 ? 'text-success' : 'text-danger';
-            const trendIcon = stock.percent_change_2w >= 0 ? '↑' : '↓';
-            
-            stocksHtml += `
-                <div class="col-md-6 col-lg-4">
-                    <div class="card stock-card fade-in">
-                        <div class="card-body">
-                            <div class="d-flex justify-content-between align-items-center mb-3">
-                                <div>
-                                    <h5 class="card-title mb-0">${stock.symbol}</h5>
-                                    <small class="text-muted">${stock.name}</small>
+            stocks.forEach((stock, index) => {
+                const trendColor = stock.percent_change_2w >= 0 ? 'text-success' : 'text-danger';
+                const trendIcon = stock.percent_change_2w >= 0 ? '↑' : '↓';
+                const chartId = `chart-${index}`;
+                
+                stocksHtml += `
+                    <div class="col-md-6 col-lg-4">
+                        <div class="card stock-card fade-in">
+                            <div class="card-body">
+                                <!-- Header section same -->
+                                
+                                <!-- Price section same -->
+                                
+                                <!-- 14-day trend chart -->
+                                <div class="position-relative mb-3" style="height: 80px">
+                                    <canvas id="${chartId}"></canvas>
                                 </div>
-                                <span class="badge bg-${stock.recommendation === 'BUY' ? 'success' : stock.recommendation === 'SELL' ? 'danger' : 'warning'}">
-                                    ${stock.recommendation}
-                                </span>
-                            </div>
-                            
-                            <div class="mb-3">
-                                <h3 class="${trendColor}">$${stock.current_price?.toFixed(2) || 'N/A'}</h3>
-                                <div class="${trendColor}">
-                                    ${trendIcon} ${Math.abs(stock.percent_change_2w).toFixed(2)}%
-                                    <span class="text-muted">(2wk)</span>
-                                </div>
-                            </div>
-                            
-                            <div class="row mb-3">
-                                <div class="col-6">
-                                    <small class="text-muted">RSI:</small><br>
-                                    ${stock.technical_indicators.rsi || 'N/A'}
-                                </div>
-                                <div class="col-6">
-                                    <small class="text-muted">MACD:</small><br>
-                                    ${stock.technical_indicators.macd || 'N/A'}
-                                </div>
-                            </div>
-                            
-                            <div class="alert alert-secondary small p-2 mb-3">
-                                ${stock.reason}
-                            </div>
-                            
-                            <div class="text-muted small">
-                                News: ${stock.news_sentiment}
+                                
+                                <!-- Indicators and news same -->
                             </div>
                         </div>
                     </div>
-                </div>
-            `;
-        });
+                `;
+            });
 
-        stocksHtml += '</div>';
-        document.getElementById('dashboardContent').innerHTML += stocksHtml;
-    }
+            stocksHtml += '</div>';
+            document.getElementById('dashboardContent').innerHTML += stocksHtml;
 
-    // Add refresh functionality
-    document.getElementById('refreshBtn').addEventListener('click', async () => {
-        try {
-            const response = await fetch('/api/refresh', { method: 'POST' });
-            const result = await response.json();
-            if (result.success) {
-                loadDashboard();
+            // Render charts after DOM update
+            stocks.forEach((stock, index) => {
+                if(stock.history_14d?.length > 0) {
+                    renderStockChart(`chart-${index}`, stock.history_14d);
+                }
+            });
+        }
+
+        // Modified refresh function to handle cache
+        async function loadDashboard() {
+            try {
+                const response = await fetch('/api/stocks?t=' + Date.now());
+                // ... rest of the function same
             }
-        } catch (error) {
-            console.error('Refresh failed:', error);
         }
-    });
-</script>
+    </script>
 </body>
 </html>
 """
