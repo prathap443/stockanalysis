@@ -615,7 +615,12 @@ def get_news_sentiment(symbol):
     except Exception as e:
         logger.warning(f"News sentiment error for {symbol}: {e}")
         return 0
-
+def safe_float(val, default=0.0):
+    try:
+        return float(val)
+    except (ValueError, TypeError):
+        return default
+    
 def analyze_stock(symbol):
     try:
         # Get all required data
@@ -625,18 +630,18 @@ def analyze_stock(symbol):
         history_14d = get_14d_history(symbol)
 
         current_price = history.get("current_price") or info.get("current_price")
-        percent_change = history.get("percent_change_2w", 0)
-        volatility = history.get("volatility", 5)
+        percent_change = safe_float(history.get("percent_change_2w", 0))
+        volatility = safe_float(history.get("volatility", 5))
 
         # Extract and clean indicators
         technical_indicators = history.get("technical_indicators", {})
         rsi_str = str(technical_indicators.get("rsi", "50"))
         macd_str = str(technical_indicators.get("macd", "0"))
 
-        rsi = float(rsi_str.split("(")[-1].replace(")", "") or 50)
-        macd = float(macd_str.split("(")[-1].replace(")", "") or 0)
+        rsi = safe_float(rsi_str.split("(")[-1].replace(")", ""), default=50)
+        macd = safe_float(macd_str.split("(")[-1].replace(")", ""), default=0)
         volume_score = 1 if "Increasing" in technical_indicators.get("volume_analysis", "") else 0
-        sentiment_score = 0  # You can enhance this later with real sentiment analysis
+        sentiment_score = safe_float(news_sentiment, 0)
 
         # Prepare feature array
         features = np.array([[rsi, macd, volume_score, percent_change, sentiment_score, volatility]])
@@ -681,7 +686,6 @@ def analyze_stock(symbol):
             },
             "history_14d": []
         }
-
 
 def analyze_all_stocks():
     """Analyze all 20 stocks in parallel with optimized API calls"""
