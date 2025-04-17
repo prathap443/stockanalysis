@@ -851,6 +851,33 @@ def api_refresh():
         error_msg = f"Refresh error: {str(e)}"
         logger.error(error_msg)
         return jsonify({"success": False, "error": error_msg}), 500
+    
+@app.route("/predict", methods=["POST"])
+def predict():
+    try:
+        data = request.get_json()
+
+        # Expected input order for model
+        features = [
+            data.get("rsi", 50),
+            data.get("macd", 0),
+            data.get("volume_score", 0),
+            data.get("percent_change_2w", 0),
+            data.get("sentiment_score", 0),
+            data.get("volatility", 0)
+        ]
+
+        X = np.array([features])
+        prediction = model.predict(X)[0]
+        labels = {0: "SELL", 1: "HOLD", 2: "BUY"}
+
+        return jsonify({
+            "recommendation": labels.get(prediction, "HOLD"),
+            "reason": f"ML-based prediction using RSI={features[0]}, MACD={features[1]}, volume={features[2]}, change={features[3]}, sentiment={features[4]}"
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 
 if __name__ == "__main__":
     # Initial data load if no existing data
