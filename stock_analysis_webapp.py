@@ -644,7 +644,7 @@ def analyze_stock(symbol):
         sentiment_score = safe_float(news_sentiment, 0)
 
         # Prepare feature array
-        features = np.array([[rsi, macd, volume_score, percent_change, sentiment_score, volatility]])
+        features = np.array([[rsi, macd, volume_score, percent_change, volatility]])
 
         # Predict using trained model
         pred = model.predict(features)[0]
