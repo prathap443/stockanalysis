@@ -1,10 +1,3 @@
-# Enhanced Stock Analysis Web Application
-# - Analyzes top 20 stocks
-# - Comprehensive analysis with more technical indicators
-# - Improved refresh functionality
-# - Better error handling and reliability
-# - 14-day trend charts
-
 from flask import Flask, render_template, jsonify, request
 import requests
 import json
@@ -18,8 +11,9 @@ import joblib
 import numpy as np
 from textblob import TextBlob  # For basic sentiment analysis
 
-model = joblib.load("stock_predictor.pkl")
-label_encoder = joblib.load("label_encoder.pkl")
+# Load pre-trained model and label encoder
+model = joblib.load("model/stock_predictor.pkl")
+label_encoder = joblib.load("model/label_encoder.pkl")
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, 
@@ -33,35 +27,28 @@ app = Flask(__name__)
 os.makedirs('templates', exist_ok=True)
 os.makedirs('data', exist_ok=True)
 
-# Base STOCK_LIST (20 majors)
+# Stock lists
 base_stocks = [
     "AAPL", "MSFT", "GOOGL", "AMZN", "META", 
     "TSLA", "NVDA", "JPM", "V", "WMT", 
     "DIS", "NFLX", "PYPL", "INTC", "AMD", 
     "BA", "PFE", "KO", "PEP", "XOM"
 ]
-
-# Top 10 AI-related stocks
 AI_STOCKS = [
     "NVDA", "AMD", "GOOGL", "MSFT", "META",
     "TSLA", "AMZN", "IBM", "BIDU", "PLTR"
 ]
-
-# Top 20 tech-related stocks
 TECH_STOCKS = [
     "AAPL", "MSFT", "GOOGL", "AMZN", "META",
     "TSLA", "NVDA", "AMD", "INTC", "IBM",
     "CRM", "ORCL", "ADBE", "CSCO", "QCOM",
     "SAP", "TXN", "AVGO", "SNOW", "SHOP"
 ]
-
-# Merge all and remove duplicates
 STOCK_LIST = sorted(set(base_stocks + AI_STOCKS + TECH_STOCKS))
 logger.info(f"Final STOCK_LIST contains {len(STOCK_LIST)} symbols.")
 
-# Modern HTML template with glassmorphism design
+# HTML template with fixed theme toggle
 html_template = """
-
 <!DOCTYPE html>
 <html lang="en" data-theme="light">
 <head>
@@ -71,27 +58,65 @@ html_template = """
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" />
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <style>
-    body {
-      background: #f0f2f5;
-      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    /* Define theme variables */
+    :root {
+      --bg-color: #f0f2f5;
+      --card-bg: rgba(255, 255, 255, 0.7);
+      --text-color: #333;
+      --muted-color: #666;
+      --card-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
     }
+
+    [data-theme="dark"] {
+      --bg-color: #1a1a1a;
+      --card-bg: rgba(40, 40, 40, 0.7);
+      --text-color: #f0f0f0;
+      --muted-color: #aaa;
+      --card-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+    }
+
+    body {
+      background: var(--bg-color);
+      color: var(--text-color);
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      transition: background 0.3s, color 0.3s;
+    }
+
     .stock-card {
       backdrop-filter: blur(10px);
-      background: rgba(255, 255, 255, 0.7);
+      background: var(--card-bg);
       border-radius: 15px;
       padding: 15px;
-      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
-      transition: transform 0.2s;
+      box-shadow: var(--card-shadow);
+      transition: transform 0.2s, background 0.3s;
+      color: var(--text-color);
     }
+
     .stock-card:hover {
       transform: translateY(-5px);
     }
+
+    .text-muted {
+      color: var(--muted-color) !important;
+    }
+
     .fade-in {
       animation: fadeIn 0.6s ease-in-out;
     }
+
     @keyframes fadeIn {
       from { opacity: 0; }
       to   { opacity: 1; }
+    }
+
+    /* Ensure buttons adapt to theme */
+    .btn-outline-secondary {
+      color: var(--text-color);
+      border-color: var(--text-color);
+    }
+
+    .btn-outline-secondary:hover {
+      background: var(--card-bg);
     }
   </style>
 </head>
@@ -237,18 +262,21 @@ html_template = """
       });
     }
 
-function toggleTheme() {
-  const current = document.documentElement.getAttribute('data-theme');
-  const newTheme = current === 'light' ? 'dark' : 'light';
-  document.documentElement.setAttribute('data-theme', newTheme);
-  localStorage.setItem('theme', newTheme);
-}
+    function toggleTheme() {
+      console.log("Toggling theme...");
+      const current = document.documentElement.getAttribute('data-theme') || 'light';
+      const newTheme = current === 'light' ? 'dark' : 'light';
+      document.documentElement.setAttribute('data-theme', newTheme);
+      localStorage.setItem('theme', newTheme);
+      console.log("New theme:", newTheme);
+    }
 
-document.addEventListener("DOMContentLoaded", () => {
-  const saved = localStorage.getItem('theme');
-  if (saved) document.documentElement.setAttribute('data-theme', saved);
-});
-
+    document.addEventListener("DOMContentLoaded", () => {
+      const saved = localStorage.getItem('theme') || 'light';
+      document.documentElement.setAttribute('data-theme', saved);
+      console.log("Loaded theme:", saved);
+      loadDashboard();
+    });
 
     document.getElementById("refreshBtn").addEventListener("click", async () => {
       document.getElementById("refreshBtn").innerText = "Refreshing...";
@@ -266,14 +294,9 @@ document.addEventListener("DOMContentLoaded", () => {
         document.getElementById("refreshBtn").innerText = "🔄 Refresh";
       }
     });
-
-    document.addEventListener("DOMContentLoaded", loadDashboard);
   </script>
 </body>
 </html>
-
-
-
 """
 
 # Write HTML template to file
@@ -301,13 +324,11 @@ def get_14d_history(symbol):
         logger.error(f"Error fetching 14d history for {symbol}: {str(e)}")
         return []
 
-# Continue to part 2 for the remaining code...
 def get_stock_info(symbol):
     """Get basic stock info and current price with improved reliability"""
     time.sleep(random.uniform(0.5, 1.5))  # Randomized delay to avoid rate limiting
     
     try:
-        # Use the Yahoo Finance API directly
         url = f"https://query1.finance.yahoo.com/v7/finance/quote?symbols={symbol}"
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
@@ -328,11 +349,9 @@ def get_stock_info(symbol):
                 "pe_ratio": quote.get('trailingPE', None)
             }
         else:
-            # Fallback to scraping if API doesn't return expected data
             return get_stock_info_by_scraping(symbol)
     except Exception as e:
         logger.error(f"Error fetching info for {symbol}: {str(e)}")
-        # Fallback to scraping on exception
         return get_stock_info_by_scraping(symbol)
 
 def get_stock_info_by_scraping(symbol):
@@ -345,14 +364,12 @@ def get_stock_info_by_scraping(symbol):
         
         response = requests.get(url, headers=headers, timeout=15)
         
-        # Very basic extraction with minimal dependencies
         price = None
         name = symbol
         
         if response.status_code == 200:
             html = response.text
             
-            # Extract name
             if '<h1' in html:
                 name_start = html.find('<h1')
                 name_end = html.find('</h1>', name_start)
@@ -362,7 +379,6 @@ def get_stock_info_by_scraping(symbol):
                     if len(name_parts) > 1:
                         name = name_parts[-1].strip()
             
-            # Extract price - look for regularMarketPrice
             price_marker = 'data-field="regularMarketPrice"'
             if price_marker in html:
                 price_pos = html.find(price_marker)
@@ -385,7 +401,6 @@ def get_stock_info_by_scraping(symbol):
         }
     except Exception as e:
         logger.error(f"Error scraping info for {symbol}: {str(e)}")
-        # Return minimal info rather than failing
         return {
             "symbol": symbol,
             "name": symbol,
@@ -400,11 +415,9 @@ def get_historical_data(symbol, days=14):
         end_date = datetime.now()
         start_date = end_date - timedelta(days=days)
         
-        # Format dates for Yahoo Finance API
         start_timestamp = int(start_date.timestamp())
         end_timestamp = int(end_date.timestamp())
         
-        # Using Yahoo Finance API
         url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?period1={start_timestamp}&period2={end_timestamp}&interval=1d"
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
@@ -418,13 +431,11 @@ def get_historical_data(symbol, days=14):
         
         result = data["chart"]["result"][0]
         
-        # Extract timestamps and price data
         timestamps = result["timestamp"]
         quotes = result["indicators"]["quote"][0]
         close_prices = quotes["close"]
         volumes = quotes.get("volume", [])
         
-        # Filter out None values
         valid_data = []
         for i in range(len(timestamps)):
             price = close_prices[i] if i < len(close_prices) else None
@@ -435,10 +446,8 @@ def get_historical_data(symbol, days=14):
         if len(valid_data) < 2:
             return calculate_fallback_data(symbol)
         
-        # Unpack the data
         timestamps, prices, volumes = zip(*valid_data)
         
-        # Calculate key metrics
         start_price = prices[0]
         end_price = prices[-1]
         high_price = max(prices)
@@ -446,22 +455,18 @@ def get_historical_data(symbol, days=14):
         price_change = end_price - start_price
         percent_change = (price_change / start_price) * 100
         
-        # Calculate volatility
         daily_returns = [(prices[i] - prices[i-1]) / prices[i-1] * 100 for i in range(1, len(prices))]
         volatility = sum([(ret - (sum(daily_returns)/len(daily_returns)))**2 for ret in daily_returns])
         volatility = (volatility / len(daily_returns))**0.5 if daily_returns else 0
         
-        # Calculate technical indicators
         rsi = calculate_rsi(prices)
         macd = calculate_macd(prices)
         volume_trend = analyze_volume(volumes)
         
-        # Determine overall trend
         trend = "Neutral"
         bullish_signals = 0
         bearish_signals = 0
         
-        # Count signals for trend determination
         if "Oversold" in rsi: bullish_signals += 1
         elif "Overbought" in rsi: bearish_signals += 1
         
@@ -505,8 +510,8 @@ def calculate_fallback_data(symbol):
     """Calculate fallback data when we can't get real data"""
     return {
         "symbol": symbol,
-        "percent_change_2w": random.uniform(-10, 10),  # Random change between -10% and +10%
-        "current_price": random.uniform(50, 500),  # Random price
+        "percent_change_2w": random.uniform(-10, 10),
+        "current_price": random.uniform(50, 500),
         "volatility": random.uniform(1, 8),
         "technical_indicators": {
             "rsi": f"{random.uniform(30, 70):.1f}",
@@ -522,21 +527,17 @@ def calculate_rsi(prices, periods=14):
         if len(prices) < periods + 1:
             return "Neutral (N/A)"
         
-        # Calculate price changes
         deltas = [prices[i] - prices[i-1] for i in range(1, len(prices))]
         
-        # Separate gains and losses
         gains = [delta if delta > 0 else 0 for delta in deltas]
         losses = [-delta if delta < 0 else 0 for delta in deltas]
         
-        # Calculate average gains and losses over the RSI period
         avg_gain = sum(gains[-periods:]) / periods
         avg_loss = sum(losses[-periods:]) / periods
         
         if avg_loss == 0:
             return "Overbought (100.0)"
         
-        # Calculate RS and RSI
         rs = avg_gain / avg_loss
         rsi = 100 - (100 / (1 + rs))
         
@@ -555,11 +556,9 @@ def calculate_macd(prices):
     if len(prices) < 26:
         return "N/A"
     
-    # Calculate EMAs
     ema12 = sum(prices[-12:]) / 12
     ema26 = sum(prices[-26:]) / 26
     
-    # Calculate MACD
     macd = ema12 - ema26
     
     if macd > 0.5:
@@ -574,17 +573,14 @@ def analyze_volume(volumes):
     if not volumes or len(volumes) < 5:
         return "N/A"
     
-    # Filter out None values
     valid_volumes = [v for v in volumes if v is not None]
     if len(valid_volumes) < 5:
         return "Insufficient Data"
     
-    # Calculate average volume for first half and second half
     half = len(valid_volumes) // 2
     avg_first_half = sum(valid_volumes[:half]) / half
     avg_second_half = sum(valid_volumes[half:]) / (len(valid_volumes) - half)
     
-    # Calculate percent change in average volume
     volume_change = ((avg_second_half - avg_first_half) / avg_first_half) * 100
     
     if volume_change > 25:
@@ -597,15 +593,9 @@ def analyze_volume(volumes):
         return "Decreasing (Moderate)"
     else:
         return "Stable"
-@app.route("/retrain", methods=["POST"])
-def retrain_model():
-    try:
-        import train_model  # Assuming train_model.py has the retraining logic
-        return jsonify({"success": True, "message": "Model retrained successfully."})
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e)})
 
 def get_news_sentiment(symbol):
+    """Get news sentiment for a symbol"""
     try:
         url = f"https://query1.finance.yahoo.com/v1/finance/search?q={symbol}"
         headers = {"User-Agent": "Mozilla/5.0"}
@@ -617,21 +607,23 @@ def get_news_sentiment(symbol):
         full_text = " ".join(texts)
 
         if full_text:
-            score = TextBlob(full_text).sentiment.polarity  # -1 to 1
+            score = TextBlob(full_text).sentiment.polarity
             return score
         return 0
     except Exception as e:
         logger.warning(f"News sentiment error for {symbol}: {e}")
         return 0
+
 def safe_float(val, default=0.0):
+    """Safely convert to float"""
     try:
         return float(val)
     except (ValueError, TypeError):
         return default
-    
+
 def analyze_stock(symbol):
+    """Analyze a single stock"""
     try:
-        # Get all required data
         info = get_stock_info(symbol)
         history = get_historical_data(symbol)
         news_sentiment = get_news_sentiment(symbol)
@@ -641,7 +633,6 @@ def analyze_stock(symbol):
         percent_change = safe_float(history.get("percent_change_2w", 0))
         volatility = safe_float(history.get("volatility", 5))
 
-        # Extract and clean indicators
         technical_indicators = history.get("technical_indicators", {})
         rsi_str = str(technical_indicators.get("rsi", "50"))
         macd_str = str(technical_indicators.get("macd", "0"))
@@ -651,14 +642,10 @@ def analyze_stock(symbol):
         volume_score = 1 if "Increasing" in technical_indicators.get("volume_analysis", "") else 0
         sentiment_score = safe_float(news_sentiment, 0)
 
-        # Prepare feature array
         features = np.array([[rsi, macd, volume_score, percent_change, volatility]])
-
-        # Predict using trained model
         pred = model.predict(features)[0]
         recommendation = label_encoder.inverse_transform([pred])[0]
 
-        # Compose reason
         reason = (
             f"🤖 ML-based prediction using "
             f"RSI={rsi:.1f}, MACD={macd:.2f}, Change={percent_change:.2f}%, "
@@ -678,7 +665,6 @@ def analyze_stock(symbol):
             "news_sentiment": news_sentiment,
             "history_14d": history_14d
         }
-
     except Exception as e:
         logger.error(f"Error analyzing {symbol}: {str(e)}")
         return {
@@ -696,13 +682,12 @@ def analyze_stock(symbol):
         }
 
 def analyze_all_stocks():
-    """Analyze all 20 stocks in parallel with optimized API calls"""
+    """Analyze all stocks in parallel"""
     logger.info("Starting parallel stock analysis...")
     
     results = []
     recommendations = {"BUY": 0, "HOLD": 0, "SELL": 0, "UNKNOWN": 0}
 
-    # Use thread pool for parallel execution
     with ThreadPoolExecutor(max_workers=5) as executor:
         future_to_symbol = {
             executor.submit(analyze_stock, symbol): symbol 
@@ -718,11 +703,9 @@ def analyze_all_stocks():
                 results.append(analysis)
             except Exception as e:
                 logger.error(f"Error processing {symbol}: {str(e)}")
-                # Add fallback entry
                 results.append(create_fallback_entry(symbol))
                 recommendations["HOLD"] += 1
 
-    # Save data and return
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     data = {
         "stocks": results,
@@ -764,21 +747,14 @@ def index():
 def api_stocks():
     """Get stock data - first try cache, then live data"""
     try:
-        # Try to read from cached file first
-        try:
-            if os.path.exists('data/stock_analysis.json'):
-                with open('data/stock_analysis.json', 'r') as f:
-                    data = json.load(f)
-                    # Check if data is recent (less than 30 minutes old)
-                    last_updated = datetime.strptime(data['last_updated'], "%Y-%m-%d %H:%M:%S")
-                    age = datetime.now() - last_updated
-                    
-                    if age.total_seconds() < 1800:  # 30 minutes
-                        return jsonify(data)
-        except Exception as e:
-            logger.error(f"Error reading cached data: {str(e)}")
-        
-        # No recent data, run analysis
+        if os.path.exists('data/stock_analysis.json'):
+            with open('data/stock_analysis.json', 'r') as f:
+                data = json.load(f)
+                last_updated = datetime.strptime(data['last_updated'], "%Y-%m-%d %H:%M:%S")
+                age = datetime.now() - last_updated
+                
+                if age.total_seconds() < 1800:  # 30 minutes
+                    return jsonify(data)
         return jsonify(analyze_all_stocks())
     except Exception as e:
         error_msg = f"API error: {str(e)}"
@@ -787,60 +763,54 @@ def api_stocks():
 
 @app.route('/api/refresh', methods=['POST'])
 def api_refresh():
+    """Refresh stock data"""
     try:
-        # Clear old cache
         if os.path.exists('data/stock_analysis.json'):
             os.remove('data/stock_analysis.json')
-
-        # Call analyze_all_stocks (this must return a dict with 'stocks' key)
         data = analyze_all_stocks()
-
-        # Check if it's returning properly
         if not isinstance(data, dict) or "stocks" not in data:
             raise ValueError("Invalid format returned from analysis")
-
         return jsonify({"success": True, "message": "Refreshed successfully"})
-    
     except Exception as e:
         import traceback
         traceback.print_exc()
         return jsonify({"success": False, "error": str(e)}), 500
 
-    
 @app.route("/predict", methods=["POST"])
 def predict():
+    """Predict recommendation for given features"""
     try:
         data = request.get_json()
-
-        # Expected input order for model
         features = [
             data.get("rsi", 50),
             data.get("macd", 0),
             data.get("volume_score", 0),
             data.get("percent_change_2w", 0),
-            data.get("sentiment_score", 0),
             data.get("volatility", 0)
         ]
-
         X = np.array([features])
         prediction = model.predict(X)[0]
-        labels = {0: "SELL", 1: "HOLD", 2: "BUY"}
-
+        recommendation = label_encoder.inverse_transform([prediction])[0]
         return jsonify({
-            "recommendation": labels.get(prediction, "HOLD"),
-            "reason": f"ML-based prediction using RSI={features[0]}, MACD={features[1]}, volume={features[2]}, change={features[3]}, sentiment={features[4]}"
+            "recommendation": recommendation,
+            "reason": f"ML-based prediction using RSI={features[0]}, MACD={features[1]}, volume={features[2]}, change={features[3]}, volatility={features[4]}"
         })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@app.route("/retrain", methods=["POST"])
+def retrain_model():
+    """Placeholder for model retraining"""
+    try:
+        import train_model
+        return jsonify({"success": True, "message": "Model retrained successfully."})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)})
 
 if __name__ == "__main__":
-    # Initial data load if no existing data
     if not os.path.exists('data/stock_analysis.json'):
         try:
             analyze_all_stocks()
         except Exception as e:
             logger.error(f"Initial analysis error: {str(e)}")
-    
-    # Start the web server
     app.run(host='0.0.0.0', port=5000)
