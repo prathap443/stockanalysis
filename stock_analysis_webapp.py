@@ -47,7 +47,7 @@ TECH_STOCKS = [
 STOCK_LIST = sorted(set(base_stocks + AI_STOCKS + TECH_STOCKS))
 logger.info(f"Final STOCK_LIST contains {len(STOCK_LIST)} symbols.")
 
-# HTML template with fixed search and sector filter
+# HTML template with clickable recommendation filters
 html_template = """
 <!DOCTYPE html>
 <html lang="en" data-theme="light">
@@ -117,6 +117,20 @@ html_template = """
     .btn-outline-secondary:hover {
       background: var(--card-bg);
     }
+
+    .recommendation-box {
+      cursor: pointer;
+      transition: transform 0.2s;
+    }
+
+    .recommendation-box:hover {
+      transform: scale(1.05);
+    }
+
+    .recommendation-box.active {
+      border: 2px solid #007bff;
+      transform: scale(1.05);
+    }
   </style>
 </head>
 <body>
@@ -130,24 +144,29 @@ html_template = """
       <button class="btn btn-outline-secondary" onclick="toggleTheme()">🌓 Toggle Theme</button>
     </div>
 
-    <div class="row text-center mb-4">
+    <div class="row text-center mb-2">
       <div class="col-md-4">
-        <div class="p-3 bg-success text-white rounded">
+        <div id="buyBox" class="p-3 bg-success text-white rounded recommendation-box" onclick="filterByRecommendation('BUY')">
           <h5>BUY</h5>
           <h3 id="buyCount">0</h3>
         </div>
       </div>
       <div class="col-md-4">
-        <div class="p-3 bg-warning text-dark rounded">
+        <div id="holdBox" class="p-3 bg-warning text-dark rounded recommendation-box" onclick="filterByRecommendation('HOLD')">
           <h5>HOLD</h5>
           <h3 id="holdCount">0</h3>
         </div>
       </div>
       <div class="col-md-4">
-        <div class="p-3 bg-danger text-white rounded">
+        <div id="sellBox" class="p-3 bg-danger text-white rounded recommendation-box" onclick="filterByRecommendation('SELL')">
           <h5>SELL</h5>
           <h3 id="sellCount">0</h3>
         </div>
+      </div>
+    </div>
+    <div class="row text-center mb-4">
+      <div class="col-12">
+        <button id="resetFilters" class="btn btn-secondary btn-sm">Reset Filters</button>
       </div>
     </div>
 
@@ -170,6 +189,7 @@ html_template = """
 
   <script>
     let allStocks = []; // Store all stock data for filtering
+    let selectedRecommendation = ''; // Track the selected recommendation filter
 
     async function loadDashboard() {
       try {
@@ -283,9 +303,37 @@ html_template = """
         const matchesSearch = stock.symbol.toLowerCase().includes(searchTerm) || 
                              (stock.name && stock.name.toLowerCase().includes(searchTerm));
         const matchesSector = !selectedSector || (stock.sector || 'Unknown') === selectedSector;
-        return matchesSearch && matchesSector;
+        const matchesRecommendation = !selectedRecommendation || stock.recommendation === selectedRecommendation;
+        return matchesSearch && matchesSector && matchesRecommendation;
       });
       renderStocks(filteredStocks);
+    }
+
+    function filterByRecommendation(recommendation) {
+      // Toggle the recommendation filter
+      if (selectedRecommendation === recommendation) {
+        selectedRecommendation = ''; // Deselect if clicking the same filter
+      } else {
+        selectedRecommendation = recommendation;
+      }
+      // Update active state for visual feedback
+      document.querySelectorAll('.recommendation-box').forEach(box => {
+        box.classList.remove('active');
+      });
+      if (selectedRecommendation) {
+        document.getElementById(`${selectedRecommendation.toLowerCase()}Box`).classList.add('active');
+      }
+      filterStocks();
+    }
+
+    function resetFilters() {
+      selectedRecommendation = '';
+      document.getElementById("stockSearch").value = '';
+      document.getElementById("sectorFilter").value = '';
+      document.querySelectorAll('.recommendation-box').forEach(box => {
+        box.classList.remove('active');
+      });
+      filterStocks();
     }
 
     function toggleTheme() {
@@ -304,6 +352,7 @@ html_template = """
       loadDashboard();
       document.getElementById("stockSearch").addEventListener("input", filterStocks);
       document.getElementById("sectorFilter").addEventListener("change", filterStocks);
+      document.getElementById("resetFilters").addEventListener("click", resetFilters);
     });
 
     document.getElementById("refreshBtn").addEventListener("click", async () => {
@@ -312,6 +361,10 @@ html_template = """
         const res = await fetch('/api/refresh', { method: 'POST' });
         const json = await res.json();
         if (json.success) {
+          selectedRecommendation = ''; // Reset recommendation filter on refresh
+          document.querySelectorAll('.recommendation-box').forEach(box => {
+            box.classList.remove('active');
+          });
           await loadDashboard();
         } else {
           alert("Refresh failed: " + json.error);
