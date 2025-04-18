@@ -12,8 +12,8 @@ import numpy as np
 from textblob import TextBlob  # For basic sentiment analysis
 
 # Load pre-trained model and label encoder
-model = joblib.load("stock_predictor.pkl")
-label_encoder = joblib.load("label_encoder.pkl")
+model = joblib.load("model/stock_predictor.pkl")
+label_encoder = joblib.load("model/label_encoder.pkl")
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, 
@@ -47,7 +47,7 @@ TECH_STOCKS = [
 STOCK_LIST = sorted(set(base_stocks + AI_STOCKS + TECH_STOCKS))
 logger.info(f"Final STOCK_LIST contains {len(STOCK_LIST)} symbols.")
 
-# HTML template with fixed theme toggle
+# HTML template with fixed search and sector filter
 html_template = """
 <!DOCTYPE html>
 <html lang="en" data-theme="light">
@@ -109,7 +109,6 @@ html_template = """
       to   { opacity: 1; }
     }
 
-    /* Ensure buttons adapt to theme */
     .btn-outline-secondary {
       color: var(--text-color);
       border-color: var(--text-color);
@@ -170,14 +169,18 @@ html_template = """
   </div>
 
   <script>
+    let allStocks = []; // Store all stock data for filtering
+
     async function loadDashboard() {
       try {
         const response = await fetch('/api/stocks?t=' + Date.now());
         const data = await response.json();
         if (data && data.stocks) {
+          allStocks = data.stocks; // Cache stocks for filtering
           document.getElementById("dashboardContent").innerHTML = '';
           renderCounts(data.summary);
-          renderStocks(data.stocks);
+          renderStocks(allStocks);
+          populateSectorFilter(allStocks);
           document.getElementById("lastUpdated").innerText = `Last updated: ${data.last_updated}`;
         } else {
           document.getElementById("dashboardContent").innerHTML = '<p class="text-danger">No data available.</p>';
@@ -262,6 +265,29 @@ html_template = """
       });
     }
 
+    function populateSectorFilter(stocks) {
+      const sectorFilter = document.getElementById("sectorFilter");
+      const sectors = [...new Set(stocks.map(stock => stock.sector || 'Unknown'))].sort();
+      sectors.forEach(sector => {
+        const option = document.createElement("option");
+        option.value = sector;
+        option.textContent = sector;
+        sectorFilter.appendChild(option);
+      });
+    }
+
+    function filterStocks() {
+      const searchTerm = document.getElementById("stockSearch").value.toLowerCase();
+      const selectedSector = document.getElementById("sectorFilter").value;
+      const filteredStocks = allStocks.filter(stock => {
+        const matchesSearch = stock.symbol.toLowerCase().includes(searchTerm) || 
+                             (stock.name && stock.name.toLowerCase().includes(searchTerm));
+        const matchesSector = !selectedSector || (stock.sector || 'Unknown') === selectedSector;
+        return matchesSearch && matchesSector;
+      });
+      renderStocks(filteredStocks);
+    }
+
     function toggleTheme() {
       console.log("Toggling theme...");
       const current = document.documentElement.getAttribute('data-theme') || 'light';
@@ -276,6 +302,8 @@ html_template = """
       document.documentElement.setAttribute('data-theme', saved);
       console.log("Loaded theme:", saved);
       loadDashboard();
+      document.getElementById("stockSearch").addEventListener("input", filterStocks);
+      document.getElementById("sectorFilter").addEventListener("change", filterStocks);
     });
 
     document.getElementById("refreshBtn").addEventListener("click", async () => {
@@ -663,7 +691,8 @@ def analyze_stock(symbol):
             "reason": reason,
             "technical_indicators": technical_indicators,
             "news_sentiment": news_sentiment,
-            "history_14d": history_14d
+            "history_14d": history_14d,
+            "sector": info.get("sector", "Unknown")
         }
     except Exception as e:
         logger.error(f"Error analyzing {symbol}: {str(e)}")
@@ -678,7 +707,8 @@ def analyze_stock(symbol):
                 "rsi": "N/A", "macd": "N/A", 
                 "volume_analysis": "N/A", "trend": "N/A"
             },
-            "history_14d": []
+            "history_14d": [],
+            "sector": "Unknown"
         }
 
 def analyze_all_stocks():
@@ -735,7 +765,8 @@ def create_fallback_entry(symbol):
             "rsi": "N/A", "macd": "N/A", 
             "volume_analysis": "N/A", "trend": "N/A"
         },
-        "history_14d": []
+        "history_14d": [],
+        "sector": "Unknown"
     }
 
 @app.route('/')
