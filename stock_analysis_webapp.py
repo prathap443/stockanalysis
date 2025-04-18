@@ -12,8 +12,8 @@ import numpy as np
 from textblob import TextBlob  # For basic sentiment analysis
 
 # Load pre-trained model and label encoder
-model = joblib.load("model/stock_predictor.pkl")
-label_encoder = joblib.load("model/label_encoder.pkl")
+model = joblib.load("stock_predictor.pkl")
+label_encoder = joblib.load("label_encoder.pkl")
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, 
