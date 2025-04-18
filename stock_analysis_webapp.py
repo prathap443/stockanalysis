@@ -47,7 +47,7 @@ TECH_STOCKS = [
 STOCK_LIST = sorted(set(base_stocks + AI_STOCKS + TECH_STOCKS))
 logger.info(f"Final STOCK_LIST contains {len(STOCK_LIST)} symbols.")
 
-# HTML template with time period buttons
+# HTML template with updated glossy colors
 html_template = """
 <!DOCTYPE html>
 <html lang="en" data-theme="light">
@@ -121,6 +121,8 @@ html_template = """
     .recommendation-box {
       cursor: pointer;
       transition: transform 0.2s;
+      box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+      border-radius: 10px;
     }
 
     .recommendation-box:hover {
@@ -130,6 +132,21 @@ html_template = """
     .recommendation-box.active {
       border: 2px solid #007bff;
       transform: scale(1.05);
+    }
+
+    .buy-box {
+      background: linear-gradient(145deg, #34C759, #1A7431);
+      color: white;
+    }
+
+    .hold-box {
+      background: linear-gradient(145deg, #FF9500, #CC4D00);
+      color: white;
+    }
+
+    .sell-box {
+      background: linear-gradient(145deg, #FF3B30, #A61C1C);
+      color: white;
     }
 
     .time-period-btn {
@@ -157,19 +174,19 @@ html_template = """
 
     <div class="row text-center mb-2">
       <div class="col-md-4">
-        <div id="buyBox" class="p-3 bg-success text-white rounded recommendation-box" onclick="filterByRecommendation('BUY')">
+        <div id="buyBox" class="p-3 buy-box rounded recommendation-box" onclick="filterByRecommendation('BUY')">
           <h5>BUY</h5>
           <h3 id="buyCount">0</h3>
         </div>
       </div>
       <div class="col-md-4">
-        <div id="holdBox" class="p-3 bg-warning text-dark rounded recommendation-box" onclick="filterByRecommendation('HOLD')">
+        <div id="holdBox" class="p-3 hold-box rounded recommendation-box" onclick="filterByRecommendation('HOLD')">
           <h5>HOLD</h5>
           <h3 id="holdCount">0</h3>
         </div>
       </div>
       <div class="col-md-4">
-        <div id="sellBox" class="p-3 bg-danger text-white rounded recommendation-box" onclick="filterByRecommendation('SELL')">
+        <div id="sellBox" class="p-3 sell-box rounded recommendation-box" onclick="filterByRecommendation('SELL')">
           <h5>SELL</h5>
           <h3 id="sellCount">0</h3>
         </div>
@@ -567,7 +584,7 @@ def get_historical_data(symbol, days=14):
         response = requests.get(url, headers=headers, timeout=15)
         data = response.json()
         
-        if "chart" not in data or "result" not in data["chart"] or not data["chart"]["result"]:
+        if "chart" not in data or "result" in data["chart"] or not data["chart"]["result"]:
             return calculate_fallback_data(symbol)
         
         result = data["chart"]["result"][0]
