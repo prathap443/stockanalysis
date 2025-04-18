@@ -315,7 +315,7 @@ html_template = """
       });
       document.getElementById("dashboardContent").innerHTML = html;
       stocks.forEach((stock, i) => {
-        const period = selectedTimePeriods[stock.symbol] || '14D'; // Default to 14 days
+        const period = selectedTimePeriods[stock.symbol] || '1D'; // Default to 1D for intraday
         updateChart(stock.symbol, period, i);
       });
     }
@@ -486,6 +486,22 @@ html_template = """
 with open('templates/index.html', 'w') as f:
     f.write(html_template)
 
+def is_market_open():
+    """Check if U.S. markets are open (9:30 AM to 4:00 PM EST)"""
+    now = datetime.utcnow()  # Use UTC for consistency
+    # Convert UTC to EST (UTC-5)
+    est_offset = timedelta(hours=-5)
+    est_time = now + est_offset
+    market_open = est_time.replace(hour=9, minute=30, second=0, microsecond=0)
+    market_close = est_time.replace(hour=16, minute=0, second=0, microsecond=0)
+    # Adjust for the current day
+    market_open = market_open.replace(year=est_time.year, month=est_time.month, day=est_time.day)
+    market_close = market_close.replace(year=est_time.year, month=est_time.month, day=est_time.day)
+    # Check if it's a weekday (Monday=0, Sunday=6)
+    if est_time.weekday() >= 5:  # Saturday or Sunday
+        return False
+    return market_open <= est_time <= market_close
+
 def get_price_history(symbol, period):
     """Get price history for a specific period (1D, 1W, 1M, or 14D)"""
     end = int(time.time())
@@ -511,10 +527,18 @@ def get_price_history(symbol, period):
         chart = data['chart']['result'][0]
         timestamps = chart['timestamp']
         closes = chart['indicators']['quote'][0]['close']
-        return [{
-            'date': datetime.utcfromtimestamp(ts).strftime('%Y-%m-%d %H:%M:%S' if interval == "1m" else '%Y-%m-%d'),
-            'close': close
-        } for ts, close in zip(timestamps, closes) if close is not None]
+        history = []
+        for ts, close in zip(timestamps, closes):
+            if close is not None:
+                dt = datetime.utcfromtimestamp(ts)
+                # For intraday (1D), only include data up to the current time
+                if period == "1D" and dt > datetime.utcnow():
+                    continue
+                history.append({
+                    'date': dt.strftime('%Y-%m-%d %H:%M:%S' if interval == "1m" else '%Y-%m-%d'),
+                    'close': close
+                })
+        return history
     except Exception as e:
         logger.error(f"Error fetching {period} history for {symbol}: {str(e)}")
         return []
@@ -823,7 +847,7 @@ def analyze_stock(symbol):
         info = get_stock_info(symbol)
         history = get_historical_data(symbol)
         news_sentiment = get_news_sentiment(symbol)
-        history_14d = get_price_history(symbol, "14D")  # Default period for initial load
+        history_1d = get_price_history(symbol, "1D")  # Fetch intraday data
 
         current_price = history.get("current_price") or info.get("current_price")
         percent_change = safe_float(history.get("percent_change_2w", 0))
@@ -859,7 +883,7 @@ def analyze_stock(symbol):
             "reason": reason,
             "technical_indicators": technical_indicators,
             "news_sentiment": news_sentiment,
-            "history_14d": history_14d,
+            "history_1d": history_1d,
             "sector": info.get("sector", SECTOR_MAPPING.get(symbol, "Unknown"))
         }
     except Exception as e:
@@ -875,7 +899,7 @@ def analyze_stock(symbol):
                 "rsi": "N/A", "macd": "N/A", 
                 "volume_analysis": "N/A", "trend": "N/A"
             },
-            "history_14d": [],
+            "history_1d": [],
             "sector": SECTOR_MAPPING.get(symbol, "Unknown")
         }
 
@@ -933,7 +957,7 @@ def create_fallback_entry(symbol):
             "rsi": "N/A", "macd": "N/A", 
             "volume_analysis": "N/A", "trend": "N/A"
         },
-        "history_14d": [],
+        "history_1d": [],
         "sector": SECTOR_MAPPING.get(symbol, "Unknown")
     }
 
@@ -946,13 +970,14 @@ def index():
 def api_stocks():
     """Get stock data - first try cache, then live data"""
     try:
+        # During market hours, reduce cache duration to 5 minutes for fresher data
+        cache_duration = 300 if is_market_open() else 1800  # 5 minutes during market hours, 30 minutes otherwise
         if os.path.exists('data/stock_analysis.json'):
             with open('data/stock_analysis.json', 'r') as f:
                 data = json.load(f)
                 last_updated = datetime.strptime(data['last_updated'], "%Y-%m-%d %H:%M:%S")
                 age = datetime.now() - last_updated
-                
-                if age.total_seconds() < 1800:  # 30 minutes
+                if age.total_seconds() < cache_duration:
                     return jsonify(data)
         return jsonify(analyze_all_stocks())
     except Exception as e:
