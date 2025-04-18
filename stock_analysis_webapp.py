@@ -47,7 +47,44 @@ TECH_STOCKS = [
 STOCK_LIST = sorted(set(base_stocks + AI_STOCKS + TECH_STOCKS))
 logger.info(f"Final STOCK_LIST contains {len(STOCK_LIST)} symbols.")
 
-# HTML template with updated glossy colors
+# Static mapping of stock symbols to sectors
+SECTOR_MAPPING = {
+    "AAPL": "Technology",
+    "MSFT": "Technology",
+    "GOOGL": "Technology",
+    "AMZN": "Technology",
+    "META": "Technology",
+    "TSLA": "Technology",
+    "NVDA": "Technology",
+    "INTC": "Technology",
+    "AMD": "Technology",
+    "IBM": "Technology",
+    "CRM": "Technology",
+    "ORCL": "Technology",
+    "ADBE": "Technology",
+    "CSCO": "Technology",
+    "QCOM": "Technology",
+    "SAP": "Technology",
+    "TXN": "Technology",
+    "AVGO": "Technology",
+    "SNOW": "Technology",
+    "SHOP": "Technology",
+    "BIDU": "Technology",
+    "PLTR": "Technology",
+    "JPM": "Finance",
+    "V": "Finance",
+    "WMT": "Consumer Goods",
+    "DIS": "Consumer Goods",
+    "KO": "Consumer Goods",
+    "PEP": "Consumer Goods",
+    "NFLX": "Entertainment",
+    "PYPL": "Financial Services",
+    "BA": "Aerospace",
+    "PFE": "Healthcare",
+    "XOM": "Energy"
+}
+
+# HTML template
 html_template = """
 <!DOCTYPE html>
 <html lang="en" data-theme="light">
@@ -350,7 +387,7 @@ html_template = """
 
     function populateSectorFilter(stocks) {
       const sectorFilter = document.getElementById("sectorFilter");
-      const sectors = [...new Set(stocks.map(stock => stock.sector || 'Unknown'))].sort();
+      const sectors = [...new Set(stocks.map(stock => stock.sector))].sort();
       sectors.forEach(sector => {
         const option = document.createElement("option");
         option.value = sector;
@@ -365,7 +402,7 @@ html_template = """
       const filteredStocks = allStocks.filter(stock => {
         const matchesSearch = stock.symbol.toLowerCase().includes(searchTerm) || 
                              (stock.name && stock.name.toLowerCase().includes(searchTerm));
-        const matchesSector = !selectedSector || (stock.sector || 'Unknown') === selectedSector;
+        const matchesSector = !selectedSector || stock.sector === selectedSector;
         const matchesRecommendation = !selectedRecommendation || stock.recommendation === selectedRecommendation;
         return matchesSearch && matchesSector && matchesRecommendation;
       });
@@ -501,8 +538,8 @@ def get_stock_info(symbol):
                 "symbol": symbol,
                 "name": quote.get('shortName', symbol),
                 "current_price": quote.get('regularMarketPrice', None),
-                "sector": quote.get('sector', 'Unknown'),
-                "industry": quote.get('industry', 'Unknown'),
+                "sector": quote.get('sector', SECTOR_MAPPING.get(symbol, "Unknown")),
+                "industry": quote.get('industry', "Unknown"),
                 "market_cap": quote.get('marketCap', None),
                 "pe_ratio": quote.get('trailingPE', None)
             }
@@ -554,7 +591,7 @@ def get_stock_info_by_scraping(symbol):
             "symbol": symbol,
             "name": name if name else symbol,
             "current_price": price,
-            "sector": "Unknown",
+            "sector": SECTOR_MAPPING.get(symbol, "Unknown"),
             "industry": "Unknown"
         }
     except Exception as e:
@@ -562,7 +599,8 @@ def get_stock_info_by_scraping(symbol):
         return {
             "symbol": symbol,
             "name": symbol,
-            "current_price": None
+            "current_price": None,
+            "sector": SECTOR_MAPPING.get(symbol, "Unknown")
         }
 
 def get_historical_data(symbol, days=14):
@@ -584,7 +622,7 @@ def get_historical_data(symbol, days=14):
         response = requests.get(url, headers=headers, timeout=15)
         data = response.json()
         
-        if "chart" not in data or "result" in data["chart"] or not data["chart"]["result"]:
+        if "chart" not in data or "result" not in data["chart"] or not data["chart"]["result"]:
             return calculate_fallback_data(symbol)
         
         result = data["chart"]["result"][0]
@@ -822,7 +860,7 @@ def analyze_stock(symbol):
             "technical_indicators": technical_indicators,
             "news_sentiment": news_sentiment,
             "history_14d": history_14d,
-            "sector": info.get("sector", "Unknown")
+            "sector": info.get("sector", SECTOR_MAPPING.get(symbol, "Unknown"))
         }
     except Exception as e:
         logger.error(f"Error analyzing {symbol}: {str(e)}")
@@ -838,7 +876,7 @@ def analyze_stock(symbol):
                 "volume_analysis": "N/A", "trend": "N/A"
             },
             "history_14d": [],
-            "sector": "Unknown"
+            "sector": SECTOR_MAPPING.get(symbol, "Unknown")
         }
 
 def analyze_all_stocks():
@@ -896,7 +934,7 @@ def create_fallback_entry(symbol):
             "volume_analysis": "N/A", "trend": "N/A"
         },
         "history_14d": [],
-        "sector": "Unknown"
+        "sector": SECTOR_MAPPING.get(symbol, "Unknown")
     }
 
 @app.route('/')
