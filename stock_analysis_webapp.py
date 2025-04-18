@@ -47,7 +47,7 @@ TECH_STOCKS = [
 STOCK_LIST = sorted(set(base_stocks + AI_STOCKS + TECH_STOCKS))
 logger.info(f"Final STOCK_LIST contains {len(STOCK_LIST)} symbols.")
 
-# HTML template with clickable recommendation filters
+# HTML template with time period buttons
 html_template = """
 <!DOCTYPE html>
 <html lang="en" data-theme="light">
@@ -131,6 +131,17 @@ html_template = """
       border: 2px solid #007bff;
       transform: scale(1.05);
     }
+
+    .time-period-btn {
+      font-size: 0.8rem;
+      padding: 2px 8px;
+    }
+
+    .time-period-btn.active {
+      background-color: #007bff;
+      color: white;
+      border-color: #007bff;
+    }
   </style>
 </head>
 <body>
@@ -190,6 +201,7 @@ html_template = """
   <script>
     let allStocks = []; // Store all stock data for filtering
     let selectedRecommendation = ''; // Track the selected recommendation filter
+    let selectedTimePeriods = {}; // Track the selected time period for each stock
 
     async function loadDashboard() {
       try {
@@ -222,6 +234,7 @@ html_template = """
         const trendColor = stock.percent_change_2w >= 0 ? 'text-success' : 'text-danger';
         const trendIcon = stock.percent_change_2w >= 0 ? '↑' : '↓';
         const chartId = `chart-${i}`;
+        const buttonGroupId = `timePeriod-${i}`;
         html += `
           <div class="col-md-6 col-lg-4">
             <div class="stock-card">
@@ -237,23 +250,56 @@ html_template = """
                   <small>${stock.recommendation}</small>
                 </div>
               </div>
+              <div class="btn-group btn-group-sm mb-2" role="group" id="${buttonGroupId}">
+                <button type="button" class="btn btn-outline-secondary time-period-btn" onclick="updateChart('${stock.symbol}', '1D', ${i}, this)">1D</button>
+                <button type="button" class="btn btn-outline-secondary time-period-btn" onclick="updateChart('${stock.symbol}', '1W', ${i}, this)">1W</button>
+                <button type="button" class="btn btn-outline-secondary time-period-btn" onclick="updateChart('${stock.symbol}', '1M', ${i}, this)">1M</button>
+              </div>
               <canvas id="${chartId}" height="100"></canvas>
             </div>
           </div>`;
       });
       document.getElementById("dashboardContent").innerHTML = html;
       stocks.forEach((stock, i) => {
-        if (stock.history_14d?.length > 0) {
-          renderStockChart(`chart-${i}`, stock.history_14d);
-        }
+        const period = selectedTimePeriods[stock.symbol] || '14D'; // Default to 14 days
+        updateChart(stock.symbol, period, i);
       });
+    }
+
+    async function updateChart(symbol, period, index, button) {
+      try {
+        // Update the selected time period for this stock
+        selectedTimePeriods[symbol] = period;
+
+        // Update button styles
+        const buttonGroup = button ? button.parentElement : document.getElementById(`timePeriod-${index}`);
+        buttonGroup.querySelectorAll('.time-period-btn').forEach(btn => btn.classList.remove('active'));
+        if (button) {
+          button.classList.add('active');
+        }
+
+        // Fetch new data for the selected period
+        const response = await fetch(`/api/stock_history/${symbol}/${period}`);
+        const historyData = await response.json();
+        if (historyData && historyData.length > 0) {
+          renderStockChart(`chart-${index}`, historyData);
+        } else {
+          document.getElementById(`chart-${index}`).getContext('2d').clearRect(0, 0, 400, 100);
+        }
+      } catch (error) {
+        console.error(`Error updating chart for ${symbol}:`, error);
+      }
     }
 
     function renderStockChart(canvasId, historyData) {
       const ctx = document.getElementById(canvasId).getContext('2d');
+      // Clear previous chart if it exists
+      if (ctx.chart) {
+        ctx.chart.destroy();
+      }
       const dates = historyData.map(item => item.date);
       const prices = historyData.map(item => item.close);
-      new Chart(ctx, {
+      ctx.chart = new Chart(ctx, {
         type: 'line',
         data: {
           labels: dates,
@@ -328,6 +374,7 @@ html_template = """
 
     function resetFilters() {
       selectedRecommendation = '';
+      selectedTimePeriods = {}; // Reset time periods
       document.getElementById("stockSearch").value = '';
       document.getElementById("sectorFilter").value = '';
       document.querySelectorAll('.recommendation-box').forEach(box => {
@@ -362,6 +409,7 @@ html_template = """
         const json = await res.json();
         if (json.success) {
           selectedRecommendation = ''; // Reset recommendation filter on refresh
+          selectedTimePeriods = {}; // Reset time periods on refresh
           document.querySelectorAll('.recommendation-box').forEach(box => {
             box.classList.remove('active');
           });
@@ -384,11 +432,23 @@ html_template = """
 with open('templates/index.html', 'w') as f:
     f.write(html_template)
 
-def get_14d_history(symbol):
-    """Get 14-day historical prices for charts"""
+def get_price_history(symbol, period):
+    """Get price history for a specific period (1D, 1W, 1M, or 14D)"""
     end = int(time.time())
-    start = end - 60*60*24*14  # 14 days
-    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?period1={start}&period2={end}&interval=1d"
+    if period == "1D":
+        start = end - 60*60*24*1  # 1 day
+        interval = "1m"  # 1-minute intervals for intraday
+    elif period == "1W":
+        start = end - 60*60*24*7  # 7 days
+        interval = "1d"  # Daily intervals
+    elif period == "1M":
+        start = end - 60*60*24*30  # 30 days
+        interval = "1d"  # Daily intervals
+    else:  # Default to 14 days
+        start = end - 60*60*24*14  # 14 days
+        interval = "1d"  # Daily intervals
+    
+    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?period1={start}&period2={end}&interval={interval}"
     headers = {"User-Agent": "Mozilla/5.0"}
     
     try:
@@ -398,11 +458,11 @@ def get_14d_history(symbol):
         timestamps = chart['timestamp']
         closes = chart['indicators']['quote'][0]['close']
         return [{
-            'date': datetime.utcfromtimestamp(ts).strftime('%Y-%m-%d'),
+            'date': datetime.utcfromtimestamp(ts).strftime('%Y-%m-%d %H:%M:%S' if interval == "1m" else '%Y-%m-%d'),
             'close': close
         } for ts, close in zip(timestamps, closes) if close is not None]
     except Exception as e:
-        logger.error(f"Error fetching 14d history for {symbol}: {str(e)}")
+        logger.error(f"Error fetching {period} history for {symbol}: {str(e)}")
         return []
 
 def get_stock_info(symbol):
@@ -708,7 +768,7 @@ def analyze_stock(symbol):
         info = get_stock_info(symbol)
         history = get_historical_data(symbol)
         news_sentiment = get_news_sentiment(symbol)
-        history_14d = get_14d_history(symbol)
+        history_14d = get_price_history(symbol, "14D")  # Default period for initial load
 
         current_price = history.get("current_price") or info.get("current_price")
         percent_change = safe_float(history.get("percent_change_2w", 0))
@@ -844,6 +904,16 @@ def api_stocks():
         error_msg = f"API error: {str(e)}"
         logger.error(error_msg)
         return jsonify({"error": error_msg}), 500
+
+@app.route('/api/stock_history/<symbol>/<period>')
+def api_stock_history(symbol, period):
+    """Get price history for a specific stock and time period"""
+    try:
+        history = get_price_history(symbol, period)
+        return jsonify(history)
+    except Exception as e:
+        logger.error(f"Error fetching history for {symbol} ({period}): {str(e)}")
+        return jsonify([]), 500
 
 @app.route('/api/refresh', methods=['POST'])
 def api_refresh():
