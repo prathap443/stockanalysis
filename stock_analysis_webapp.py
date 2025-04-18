@@ -237,10 +237,18 @@ html_template = """
       });
     }
 
-    function toggleTheme() {
-      const current = document.documentElement.getAttribute('data-theme');
-      document.documentElement.setAttribute('data-theme', current === 'light' ? 'dark' : 'light');
-    }
+function toggleTheme() {
+  const current = document.documentElement.getAttribute('data-theme');
+  const newTheme = current === 'light' ? 'dark' : 'light';
+  document.documentElement.setAttribute('data-theme', newTheme);
+  localStorage.setItem('theme', newTheme);
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  const saved = localStorage.getItem('theme');
+  if (saved) document.documentElement.setAttribute('data-theme', saved);
+});
+
 
     document.getElementById("refreshBtn").addEventListener("click", async () => {
       document.getElementById("refreshBtn").innerText = "Refreshing...";
@@ -779,27 +787,25 @@ def api_stocks():
 
 @app.route('/api/refresh', methods=['POST'])
 def api_refresh():
-    """Force refresh stock data with improved error handling"""
     try:
-        # Clear any cached data first
+        # Clear old cache
         if os.path.exists('data/stock_analysis.json'):
-            try:
-                os.remove('data/stock_analysis.json')
-            except:
-                pass
-        
-        # Run fresh analysis
+            os.remove('data/stock_analysis.json')
+
+        # Call analyze_all_stocks (this must return a dict with 'stocks' key)
         data = analyze_all_stocks()
-        
-        # Validate the result is actually in the correct format
+
+        # Check if it's returning properly
         if not isinstance(data, dict) or "stocks" not in data:
-            return jsonify({"success": False, "error": "Invalid analysis result format"}), 500
-            
-        return jsonify({"success": True, "message": "Data refreshed with latest market information"})
+            raise ValueError("Invalid format returned from analysis")
+
+        return jsonify({"success": True, "message": "Refreshed successfully"})
+    
     except Exception as e:
-        error_msg = f"Refresh error: {str(e)}"
-        logger.error(error_msg)
-        return jsonify({"success": False, "error": error_msg}), 500
+        import traceback
+        traceback.print_exc()
+        return jsonify({"success": False, "error": str(e)}), 500
+
     
 @app.route("/predict", methods=["POST"])
 def predict():
