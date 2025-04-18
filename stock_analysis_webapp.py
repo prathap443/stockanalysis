@@ -309,13 +309,19 @@ html_template = """
                 <button type="button" class="btn btn-outline-secondary time-period-btn" onclick="updateChart('${stock.symbol}', '1W', ${i}, this)">1W</button>
                 <button type="button" class="btn btn-outline-secondary time-period-btn" onclick="updateChart('${stock.symbol}', '1M', ${i}, this)">1M</button>
               </div>
-              <canvas id="${chartId}" height="100"></canvas>
+              <div id="chartContainer-${i}">
+                <canvas id="${chartId}" height="100"></canvas>
+              </div>
+              <div class="mt-2">
+                <button class="btn btn-sm btn-info" onclick="getLivePrediction('${stock.symbol}', ${i})">Get Live Prediction</button>
+                <div id="livePrediction-${i}" class="small mt-1"></div>
+              </div>
             </div>
           </div>`;
       });
       document.getElementById("dashboardContent").innerHTML = html;
       stocks.forEach((stock, i) => {
-        const period = selectedTimePeriods[stock.symbol] || '14D'; // Default to 14 days
+        const period = selectedTimePeriods[stock.symbol] || '1D'; // Default to 1D for intraday
         updateChart(stock.symbol, period, i);
       });
     }
@@ -335,13 +341,20 @@ html_template = """
         // Fetch new data for the selected period
         const response = await fetch(`/api/stock_history/${symbol}/${period}`);
         const historyData = await response.json();
+        const chartContainer = document.getElementById(`chartContainer-${index}`);
         if (historyData && historyData.length > 0) {
-          renderStockChart(`chart-${index}`, historyData);
+          if (historyData[0].error) {
+            chartContainer.innerHTML = `<p class="small text-muted">${historyData[0].error}</p>`;
+          } else {
+            chartContainer.innerHTML = `<canvas id="chart-${index}" height="100"></canvas>`;
+            renderStockChart(`chart-${index}`, historyData);
+          }
         } else {
-          document.getElementById(`chart-${index}`).getContext('2d').clearRect(0, 0, 400, 100);
+          chartContainer.innerHTML = `<p class="small text-muted">No data available for ${period}.</p>`;
         }
       } catch (error) {
         console.error(`Error updating chart for ${symbol}:`, error);
+        document.getElementById(`chartContainer-${index}`).innerHTML = `<p class="small text-muted">Error loading chart: ${error}</p>`;
       }
     }
 
@@ -383,6 +396,27 @@ html_template = """
           }
         }
       });
+    }
+
+    async function getLivePrediction(symbol, index) {
+      try {
+        const response = await fetch(`/api/live_prediction/${symbol}`);
+        const data = await response.json();
+        if (data.error) {
+          document.getElementById(`livePrediction-${index}`).innerText = `Error: ${data.error}`;
+          return;
+        }
+        const trendColor = data.percent_change_today >= 0 ? 'text-success' : 'text-danger';
+        const trendIcon = data.percent_change_today >= 0 ? '↑' : '↓';
+        document.getElementById(`livePrediction-${index}`).innerHTML = `
+          <strong>Live Prediction: ${data.recommendation}</strong><br/>
+          <span class="${trendColor}">${trendIcon}${data.percent_change_today.toFixed(2)}% today</span><br/>
+          RSI: ${data.technical_indicators.rsi}, MACD: ${data.technical_indicators.macd}<br/>
+          Updated: ${data.last_updated}
+        `;
+      } catch (error) {
+        document.getElementById(`livePrediction-${index}`).innerText = `Error fetching live prediction: ${error}`;
+      }
     }
 
     function populateSectorFilter(stocks) {
@@ -486,38 +520,122 @@ html_template = """
 with open('templates/index.html', 'w') as f:
     f.write(html_template)
 
-def get_price_history(symbol, period):
-    """Get price history for a specific period (1D, 1W, 1M, or 14D)"""
-    end = int(time.time())
-    if period == "1D":
-        start = end - 60*60*24*1  # 1 day
-        interval = "1m"  # 1-minute intervals for intraday
-    elif period == "1W":
-        start = end - 60*60*24*7  # 7 days
-        interval = "1d"  # Daily intervals
-    elif period == "1M":
-        start = end - 60*60*24*30  # 30 days
-        interval = "1d"  # Daily intervals
-    else:  # Default to 14 days
-        start = end - 60*60*24*14  # 14 days
-        interval = "1d"  # Daily intervals
-    
+def is_market_open():
+    """Check if U.S. markets are open (9:30 AM to 4:00 PM EST)"""
+    now = datetime.utcnow()  # Use UTC for consistency
+    # Convert UTC to EST (UTC-5)
+    est_offset = timedelta(hours=-5)
+    est_time = now + est_offset
+    market_open = est_time.replace(hour=9, minute=30, second=0, microsecond=0)
+    market_close = est_time.replace(hour=16, minute=0, second=0, microsecond=0)
+    # Adjust for the current day
+    market_open = market_open.replace(year=est_time.year, month=est_time.month, day=est_time.day)
+    market_close = market_close.replace(year=est_time.year, month=est_time.month, day=est_time.day)
+    # Check if it's a weekday (Monday=0, Sunday=6)
+    if est_time.weekday() >= 5:  # Saturday or Sunday
+        return False
+    return market_open <= est_time <= market_close
+
+def fetch_yahoo_finance_data(symbol, start, end, interval, retries=3):
+    """Fetch data from Yahoo Finance with retry logic"""
     url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?period1={start}&period2={end}&interval={interval}"
     headers = {"User-Agent": "Mozilla/5.0"}
     
+    for attempt in range(retries):
+        try:
+            response = requests.get(url, headers=headers, timeout=10)
+            response.raise_for_status()
+            data = response.json()
+            if 'chart' in data and 'result' in data['chart'] and data['chart']['result']:
+                return data
+            else:
+                logger.warning(f"No data found for {symbol} (interval={interval}): {data.get('chart', {}).get('error', 'Unknown error')}")
+                return data
+        except requests.exceptions.RequestException as e:
+            logger.warning(f"Attempt {attempt + 1}/{retries} failed for {symbol}: {str(e)}")
+            if attempt < retries - 1:
+                time.sleep(random.uniform(1, 3))  # Random delay before retry
+            else:
+                logger.error(f"Failed to fetch data for {symbol} after {retries} attempts: {str(e)}")
+                return None
+
+def get_price_history(symbol, period):
+    """Get price history for a specific period (1D, 1W, 1M, or 14D)"""
+    end = int(time.time())
+    interval = "1d"  # Default interval
+    start = end
+
+    if period == "1D":
+        if is_market_open():
+            start = end - 60*60*24*1  # 1 day
+            interval = "1m"  # 1-minute intervals for intraday
+        else:
+            # After market hours, fetch the last trading day's data
+            now = datetime.utcnow()
+            est_offset = timedelta(hours=-5)
+            est_time = now + est_offset
+            # If after 4:00 PM EST, get data for today; otherwise, get previous day
+            if est_time.hour >= 16 or est_time.weekday() >= 5:
+                # If after hours or weekend, go back to the last trading day
+                days_back = 1
+                if est_time.weekday() == 5:  # Saturday
+                    days_back = 1
+                elif est_time.weekday() == 6:  # Sunday
+                    days_back = 2
+                elif est_time.weekday() == 0 and est_time.hour < 9:  # Monday before market open
+                    days_back = 3
+                start_dt = now - timedelta(days=days_back)
+                start_dt = start_dt.replace(hour=14, minute=30, second=0, microsecond=0)  # 9:30 AM EST
+                end_dt = start_dt.replace(hour=21, minute=0, second=0, microsecond=0)  # 4:00 PM EST
+                start = int(start_dt.timestamp())
+                end = int(end_dt.timestamp())
+                interval = "1m"
+            else:
+                start = end - 60*60*24*1  # Previous day
+                interval = "1m"
+    elif period == "1W":
+        start = end - 60*60*24*7  # 7 days
+        interval = "1d"
+    elif period == "1M":
+        start = end - 60*60*24*30  # 30 days
+        interval = "1d"
+    else:  # Default to 14 days
+        start = end - 60*60*24*14
+        interval = "1d"
+    
+    data = fetch_yahoo_finance_data(symbol, start, end, interval)
+    if not data:
+        return [{"error": f"Unable to fetch {period} data for {symbol} after multiple attempts."}]
+
     try:
-        response = requests.get(url, headers=headers, timeout=10)
-        data = response.json()
+        if 'error' in data['chart'] and data['chart']['error']:
+            return [{"error": f"Yahoo Finance API error: {data['chart']['error']}"}]
+        
         chart = data['chart']['result'][0]
-        timestamps = chart['timestamp']
+        timestamps = chart.get('timestamp', [])
+        if not timestamps:
+            if period == "1D":
+                return [{"error": "Intraday data unavailable (markets may be closed)."}]
+            return [{"error": f"No {period} data available for {symbol}."}]
+
         closes = chart['indicators']['quote'][0]['close']
-        return [{
-            'date': datetime.utcfromtimestamp(ts).strftime('%Y-%m-%d %H:%M:%S' if interval == "1m" else '%Y-%m-%d'),
-            'close': close
-        } for ts, close in zip(timestamps, closes) if close is not None]
+        history = []
+        for ts, close in zip(timestamps, closes):
+            if close is not None:
+                dt = datetime.utcfromtimestamp(ts)
+                # For intraday (1D), only include data up to the current time if market is open
+                if period == "1D" and is_market_open() and dt > datetime.utcnow():
+                    continue
+                history.append({
+                    'date': dt.strftime('%Y-%m-%d %H:%M:%S' if interval == "1m" else '%Y-%m-%d'),
+                    'close': close
+                })
+        if not history:
+            return [{"error": f"No valid {period} data points for {symbol}."}]
+        return history
     except Exception as e:
-        logger.error(f"Error fetching {period} history for {symbol}: {str(e)}")
-        return []
+        logger.error(f"Error processing {period} history for {symbol}: {str(e)} - Response: {data}")
+        return [{"error": f"Error processing {period} data for {symbol}: {str(e)}"}]
 
 def get_stock_info(symbol):
     """Get basic stock info and current price with improved reliability"""
@@ -823,7 +941,7 @@ def analyze_stock(symbol):
         info = get_stock_info(symbol)
         history = get_historical_data(symbol)
         news_sentiment = get_news_sentiment(symbol)
-        history_14d = get_price_history(symbol, "14D")  # Default period for initial load
+        history_1d = get_price_history(symbol, "1D")  # Fetch intraday data
 
         current_price = history.get("current_price") or info.get("current_price")
         percent_change = safe_float(history.get("percent_change_2w", 0))
@@ -859,7 +977,7 @@ def analyze_stock(symbol):
             "reason": reason,
             "technical_indicators": technical_indicators,
             "news_sentiment": news_sentiment,
-            "history_14d": history_14d,
+            "history_1d": history_1d,
             "sector": info.get("sector", SECTOR_MAPPING.get(symbol, "Unknown"))
         }
     except Exception as e:
@@ -875,7 +993,7 @@ def analyze_stock(symbol):
                 "rsi": "N/A", "macd": "N/A", 
                 "volume_analysis": "N/A", "trend": "N/A"
             },
-            "history_14d": [],
+            "history_1d": [],
             "sector": SECTOR_MAPPING.get(symbol, "Unknown")
         }
 
@@ -933,7 +1051,7 @@ def create_fallback_entry(symbol):
             "rsi": "N/A", "macd": "N/A", 
             "volume_analysis": "N/A", "trend": "N/A"
         },
-        "history_14d": [],
+        "history_1d": [],
         "sector": SECTOR_MAPPING.get(symbol, "Unknown")
     }
 
@@ -946,13 +1064,14 @@ def index():
 def api_stocks():
     """Get stock data - first try cache, then live data"""
     try:
+        # During market hours, reduce cache duration to 5 minutes for fresher data
+        cache_duration = 300 if is_market_open() else 1800  # 5 minutes during market hours, 30 minutes otherwise
         if os.path.exists('data/stock_analysis.json'):
             with open('data/stock_analysis.json', 'r') as f:
                 data = json.load(f)
                 last_updated = datetime.strptime(data['last_updated'], "%Y-%m-%d %H:%M:%S")
                 age = datetime.now() - last_updated
-                
-                if age.total_seconds() < 1800:  # 30 minutes
+                if age.total_seconds() < cache_duration:
                     return jsonify(data)
         return jsonify(analyze_all_stocks())
     except Exception as e:
@@ -968,7 +1087,7 @@ def api_stock_history(symbol, period):
         return jsonify(history)
     except Exception as e:
         logger.error(f"Error fetching history for {symbol} ({period}): {str(e)}")
-        return jsonify([]), 500
+        return jsonify([{"error": f"Error fetching {period} history: {str(e)}"}]), 500
 
 @app.route('/api/refresh', methods=['POST'])
 def api_refresh():
@@ -1005,6 +1124,63 @@ def predict():
             "reason": f"ML-based prediction using RSI={features[0]}, MACD={features[1]}, volume={features[2]}, change={features[3]}, volatility={features[4]}"
         })
     except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/live_prediction/<symbol>')
+def live_prediction(symbol):
+    """Get a live prediction for a specific stock based on the latest intraday data"""
+    try:
+        # Fetch the latest intraday data
+        history_1d = get_price_history(symbol, "1D")
+        if not history_1d or ('error' in history_1d[0] and history_1d[0]['error']):
+            return jsonify({"error": "Insufficient intraday data for prediction"}), 400
+
+        # Fetch current stock info
+        info = get_stock_info(symbol)
+        news_sentiment = get_news_sentiment(symbol)
+
+        # Extract prices from intraday data
+        prices = [entry['close'] for entry in history_1d if 'close' in entry]
+        if not prices:
+            return jsonify({"error": "No valid price data available for prediction"}), 400
+
+        current_price = prices[-1] if prices else info.get("current_price", 100.0)
+
+        # Compute technical indicators
+        rsi = calculate_rsi(prices)
+        macd = calculate_macd(prices)
+
+        # Compute percent change and volatility
+        start_price = prices[0]
+        percent_change = ((current_price - start_price) / start_price) * 100 if start_price else 0
+        daily_returns = [(prices[i] - prices[i-1]) / prices[i-1] * 100 for i in range(1, len(prices))]
+        volatility = (sum([(ret - (sum(daily_returns)/len(daily_returns)))**2 for ret in daily_returns]) / len(daily_returns))**0.5 if daily_returns else 5
+
+        # Extract features for prediction
+        rsi_value = safe_float(rsi.split("(")[-1].replace(")", ""), default=50)
+        macd_value = safe_float(macd.split("(")[-1].replace(")", ""), default=0)
+        volume_score = 1 if len(prices) > 10 and prices[-1] > prices[-2] else 0  # Simplified volume trend
+
+        # Make prediction
+        features = np.array([[rsi_value, macd_value, volume_score, percent_change, volatility]])
+        pred = model.predict(features)[0]
+        recommendation = label_encoder.inverse_transform([pred])[0]
+
+        return jsonify({
+            "symbol": symbol,
+            "recommendation": recommendation,
+            "current_price": current_price,
+            "percent_change_today": percent_change,
+            "technical_indicators": {
+                "rsi": rsi,
+                "macd": macd,
+                "trend": "Bullish" if percent_change > 0 else "Bearish"
+            },
+            "news_sentiment": news_sentiment,
+            "last_updated": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+        })
+    except Exception as e:
+        logger.error(f"Error generating live prediction for {symbol}: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
 @app.route("/retrain", methods=["POST"])
