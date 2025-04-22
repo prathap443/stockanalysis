@@ -84,7 +84,7 @@ SECTOR_MAPPING = {
     "XOM": "Energy"
 }
 
-# HTML template with modal and expand icon
+# HTML template with modal and expand icon (from previous update)
 html_template = """
 <!DOCTYPE html>
 <html lang="en" data-theme="light">
@@ -713,7 +713,7 @@ def get_price_history(symbol, period):
                 if period == "1D" and is_market_open() and dt > datetime.utcnow():
                     continue
                 history.append({
-                    'date': dt.strftime('%Y-%m-%d %H:%M:%S' if interval == "1m" else '%Y-%m-d'),
+                    'date': dt.strftime('%Y-%m-%d %H:%M:%S' if interval == "1m" else '%Y-%m-%d'),
                     'close': close
                 })
         if not history:
@@ -761,7 +761,7 @@ def get_stock_info_by_scraping(symbol):
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
         }
         
-        response = requests.get(url, headers=headers, timeout=15 15)
+        response = requests.get(url, headers=headers, timeout=15)  # Fixed: Removed the extra '15'
         
         price = None
         name = symbol
@@ -967,19 +967,24 @@ def calculate_macd(prices):
         return f"Bearish ({macd:.2f})"
     else:
         return f"Neutral ({macd:.2f})"
-
 def analyze_volume(volumes):
     """Analyze trading volume trend"""
     if not volumes or len(volumes) < 5:
+        logger.warning(f"Volume analysis skipped: insufficient data (len={len(volumes)})")
         return "N/A"
     
     valid_volumes = [v for v in volumes if v is not None]
     if len(valid_volumes) < 5:
+        logger.warning(f"Volume analysis failed: insufficient valid data (valid_len={len(valid_volumes)})")
         return "Insufficient Data"
     
     half = len(valid_volumes) // 2
     avg_first_half = sum(valid_volumes[:half]) / half
     avg_second_half = sum(valid_volumes[half:]) / (len(valid_volumes) - half)
+    
+    if avg_first_half == 0:
+        logger.warning("First half volume average is zero, cannot compute volume change")
+        return "Stable"
     
     volume_change = ((avg_second_half - avg_first_half) / avg_first_half) * 100
     
@@ -999,7 +1004,7 @@ def get_news_sentiment(symbol):
     try:
         url = f"https://query1.finance.yahoo.com/v1/finance/search?q={symbol}"
         headers = {"User-Agent": "Mozilla/5.0"}
-        response = requests.get(url, headers=headers)
+        response = requests.get(url, headers=headers, timeout=15)  # Added timeout
         data = response.json()
 
         articles = data.get("quotes", [])[:5]
