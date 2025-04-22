@@ -84,7 +84,7 @@ SECTOR_MAPPING = {
     "XOM": "Energy"
 }
 
-# HTML template
+# HTML template with modal and expand icon
 html_template = """
 <!DOCTYPE html>
 <html lang="en" data-theme="light">
@@ -196,6 +196,31 @@ html_template = """
       color: white;
       border-color: #007bff;
     }
+
+    .expand-icon {
+      font-size: 0.9rem;
+      padding: 2px 6px;
+      margin-left: 5px;
+      cursor: pointer;
+    }
+
+    .expand-icon:hover {
+      background-color: #e9ecef;
+      border-radius: 5px;
+    }
+
+    .modal-content {
+      background: var(--card-bg);
+      color: var(--text-color);
+    }
+
+    .modal-header {
+      border-bottom: 1px solid var(--muted-color);
+    }
+
+    .modal-footer {
+      border-top: 1px solid var(--muted-color);
+    }
   </style>
 </head>
 <body>
@@ -252,6 +277,25 @@ html_template = """
     <div id="dashboardContent" class="row g-4"></div>
   </div>
 
+  <!-- Modal for Expanded Chart -->
+  <div class="modal fade" id="chartModal" tabindex="-1" aria-labelledby="chartModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" id="chartModalLabel">Expanded Chart</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <canvas id="modalChart" height="400"></canvas>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
   <script>
     let allStocks = []; // Store all stock data for filtering
     let selectedRecommendation = ''; // Track the selected recommendation filter
@@ -306,6 +350,7 @@ html_template = """
               </div>
               <div class="btn-group btn-group-sm mb-2" role="group" id="${buttonGroupId}">
                 <button type="button" class="btn btn-outline-secondary time-period-btn" onclick="updateChart('${stock.symbol}', '1D', ${i}, this)">1D</button>
+                <button type="button" class="btn btn-outline-secondary time-period-btn expand-icon" onclick="expandChart('${stock.symbol}', ${i})">🔍</button>
                 <button type="button" class="btn btn-outline-secondary time-period-btn" onclick="updateChart('${stock.symbol}', '1W', ${i}, this)">1W</button>
                 <button type="button" class="btn btn-outline-secondary time-period-btn" onclick="updateChart('${stock.symbol}', '1M', ${i}, this)">1M</button>
               </div>
@@ -347,7 +392,7 @@ html_template = """
             chartContainer.innerHTML = `<p class="small text-muted">${historyData[0].error}</p>`;
           } else {
             chartContainer.innerHTML = `<canvas id="chart-${index}" height="100"></canvas>`;
-            renderStockChart(`chart-${index}`, historyData);
+            renderStockChart(`chart-${index}`, historyData, period);
           }
         } else {
           chartContainer.innerHTML = `<p class="small text-muted">No data available for ${period}.</p>`;
@@ -358,7 +403,39 @@ html_template = """
       }
     }
 
-    function renderStockChart(canvasId, historyData) {
+    async function expandChart(symbol, index) {
+      try {
+        // Fetch the 1D data for the expanded chart
+        const response = await fetch(`/api/stock_history/${symbol}/1D`);
+        const historyData = await response.json();
+
+        if (historyData && historyData.length > 0 && !historyData[0].error) {
+          // Update modal title
+          document.getElementById('chartModalLabel').innerText = `${symbol} - 1D Chart (Intraday)`;
+
+          // Clear previous chart in the modal if it exists
+          const modalCanvas = document.getElementById('modalChart');
+          const ctx = modalCanvas.getContext('2d');
+          if (ctx.chart) {
+            ctx.chart.destroy();
+          }
+
+          // Render the chart in the modal
+          renderStockChart('modalChart', historyData, '1D');
+
+          // Show the modal
+          const chartModal = new bootstrap.Modal(document.getElementById('chartModal'));
+          chartModal.show();
+        } else {
+          alert('No 1D data available to display in expanded view.');
+        }
+      } catch (error) {
+        console.error(`Error expanding chart for ${symbol}:`, error);
+        alert('Error loading expanded chart: ' + error);
+      }
+    }
+
+    function renderStockChart(canvasId, historyData, period) {
       const ctx = document.getElementById(canvasId).getContext('2d');
       // Clear previous chart if it exists
       if (ctx.chart) {
@@ -366,6 +443,7 @@ html_template = """
       }
       const dates = historyData.map(item => item.date);
       const prices = historyData.map(item => item.close);
+      const isIntraday = period === '1D';
       ctx.chart = new Chart(ctx, {
         type: 'line',
         data: {
@@ -386,12 +464,23 @@ html_template = """
           scales: {
             x: {
               ticks: {
-                maxTicksLimit: 5,
-                autoSkip: true
+                maxTicksLimit: isIntraday ? 8 : 5, // More ticks for intraday to show hourly trends
+                autoSkip: true,
+                callback: function(value, index, values) {
+                  if (isIntraday) {
+                    // For intraday, show time in HH:MM format
+                    const date = new Date(dates[index]);
+                    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                  } else {
+                    // For 1W and 1M, show date
+                    return dates[index];
+                  }
+                }
               }
             },
             y: {
-              display: false
+              display: canvasId !== 'modalChart', // Show Y-axis only in small charts
+              beginAtZero: false
             }
           }
         }
@@ -570,29 +659,26 @@ def get_price_history(symbol, period):
             start = end - 60*60*24*1  # 1 day
             interval = "1m"  # 1-minute intervals for intraday
         else:
-            # After market hours, fetch the last trading day's data
+            # After market hours, fetch the current day's data (if today is a trading day)
             now = datetime.utcnow()
             est_offset = timedelta(hours=-5)
             est_time = now + est_offset
-            # If after 4:00 PM EST, get data for today; otherwise, get previous day
-            if est_time.hour >= 16 or est_time.weekday() >= 5:
-                # If after hours or weekend, go back to the last trading day
-                days_back = 1
-                if est_time.weekday() == 5:  # Saturday
-                    days_back = 1
-                elif est_time.weekday() == 6:  # Sunday
-                    days_back = 2
-                elif est_time.weekday() == 0 and est_time.hour < 9:  # Monday before market open
-                    days_back = 3
-                start_dt = now - timedelta(days=days_back)
-                start_dt = start_dt.replace(hour=14, minute=30, second=0, microsecond=0)  # 9:30 AM EST
-                end_dt = start_dt.replace(hour=21, minute=0, second=0, microsecond=0)  # 4:00 PM EST
-                start = int(start_dt.timestamp())
-                end = int(end_dt.timestamp())
-                interval = "1m"
-            else:
-                start = end - 60*60*24*1  # Previous day
-                interval = "1m"
+            
+            # Determine the last trading day
+            last_trading_day = now
+            if est_time.weekday() == 5:  # Saturday
+                last_trading_day -= timedelta(days=1)  # Go back to Friday
+            elif est_time.weekday() == 6:  # Sunday
+                last_trading_day -= timedelta(days=2)  # Go back to Friday
+            elif est_time.weekday() == 0 and est_time.hour < 9:  # Monday before market open
+                last_trading_day -= timedelta(days=3)  # Go back to Friday
+            
+            # Set the time range for the last trading day (9:30 AM to 4:00 PM EST)
+            start_dt = last_trading_day.replace(hour=14, minute=30, second=0, microsecond=0)  # 9:30 AM EST (14:30 UTC)
+            end_dt = last_trading_day.replace(hour=21, minute=0, second=0, microsecond=0)  # 4:00 PM EST (21:00 UTC)
+            start = int(start_dt.timestamp())
+            end = int(end_dt.timestamp())
+            interval = "1m"
     elif period == "1W":
         start = end - 60*60*24*7  # 7 days
         interval = "1d"
@@ -627,7 +713,7 @@ def get_price_history(symbol, period):
                 if period == "1D" and is_market_open() and dt > datetime.utcnow():
                     continue
                 history.append({
-                    'date': dt.strftime('%Y-%m-%d %H:%M:%S' if interval == "1m" else '%Y-%m-%d'),
+                    'date': dt.strftime('%Y-%m-%d %H:%M:%S' if interval == "1m" else '%Y-%m-d'),
                     'close': close
                 })
         if not history:
@@ -675,7 +761,7 @@ def get_stock_info_by_scraping(symbol):
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
         }
         
-        response = requests.get(url, headers=headers, timeout=15)
+        response = requests.get(url, headers=headers, timeout=15 15)
         
         price = None
         name = symbol
