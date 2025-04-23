@@ -761,7 +761,7 @@ def get_stock_info_by_scraping(symbol):
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
         }
         
-        response = requests.get(url, headers=headers, timeout=15)  # Fixed: Removed the extra '15'
+        response = requests.get(url, headers=headers, timeout=15)
         
         price = None
         name = symbol
@@ -826,7 +826,7 @@ def get_historical_data(symbol, days=14):
         response = requests.get(url, headers=headers, timeout=15)
         data = response.json()
         
-        if "chart" not in data or "result" not in data["chart"] or not data["chart"]["result"]:
+        if "chart" not in data or "result" in data["chart"] or not data["chart"]["result"]:
             return calculate_fallback_data(symbol)
         
         result = data["chart"]["result"][0]
@@ -967,6 +967,7 @@ def calculate_macd(prices):
         return f"Bearish ({macd:.2f})"
     else:
         return f"Neutral ({macd:.2f})"
+
 def analyze_volume(volumes):
     """Analyze trading volume trend"""
     if not volumes or len(volumes) < 5:
@@ -1000,20 +1001,23 @@ def analyze_volume(volumes):
         return "Stable"
 
 def get_news_sentiment(symbol):
-    """Get news sentiment for a symbol"""
+    """Get news sentiment for a symbol by analyzing recent news headlines"""
     try:
         url = f"https://query1.finance.yahoo.com/v1/finance/search?q={symbol}"
         headers = {"User-Agent": "Mozilla/5.0"}
-        response = requests.get(url, headers=headers, timeout=15)  # Added timeout
+        response = requests.get(url, headers=headers, timeout=15)
         data = response.json()
 
-        articles = data.get("quotes", [])[:5]
-        texts = [a.get("shortname", "") for a in articles]
+        # Use the 'news' field instead of 'quotes'
+        articles = data.get("news", [])[:5]
+        texts = [a.get("title", "") for a in articles]  # Extract news titles
         full_text = " ".join(texts)
 
         if full_text:
             score = TextBlob(full_text).sentiment.polarity
+            logger.info(f"Sentiment for {symbol}: {score:.2f} based on {len(articles)} articles")
             return score
+        logger.warning(f"No news articles found for {symbol}")
         return 0
     except Exception as e:
         logger.warning(f"News sentiment error for {symbol}: {e}")
