@@ -1012,32 +1012,43 @@ def analyze_volume(volumes):
     else:
         return "Stable"
 
-def get_news_sentiment(symbol):
-    """Get news sentiment for a symbol"""
-    try:
-        url = f"https://query1.finance.yahoo.com/v1/finance/search?q={symbol}"
-        headers = {"User-Agent": "Mozilla/5.0"}
-        response = requests.get(url, headers=headers)
-        data = response.json()
+def get_news_sentiment(symbol, retries=3):
+    """Get news sentiment for a symbol by analyzing recent news headlines with retries"""
+    for attempt in range(retries):
+        try:
+            url = f"https://query1.finance.yahoo.com/v1/finance/search?q={symbol}"
+            headers = {"User-Agent": "Mozilla/5.0"}
+            response = requests.get(url, headers=headers, timeout=15)
+            response.raise_for_status()
+            data = response.json()
 
-        articles = data.get("quotes", [])[:5]
-        texts = [a.get("shortname", "") for a in articles]
-        full_text = " ".join(texts)
+            articles = data.get("news", [])[:5]
+            if not articles:
+                logger.warning(f"No news articles found for {symbol} on attempt {attempt + 1}/{retries}")
+                if attempt == retries - 1:
+                    return 0
+                time.sleep(random.uniform(1, 3))
+                continue
 
-        if full_text:
+            texts = [a.get("title", "") for a in articles]
+            full_text = " ".join(texts)
+
+            if not full_text.strip():
+                logger.warning(f"No valid news titles found for {symbol} on attempt {attempt + 1}/{retries}")
+                if attempt == retries - 1:
+                    return 0
+                time.sleep(random.uniform(1, 3))
+                continue
+
             score = TextBlob(full_text).sentiment.polarity
+            logger.info(f"Sentiment for {symbol}: {score:.3f} based on {len(articles)} articles: {texts}")
             return score
-        return 0
-    except Exception as e:
-        logger.warning(f"News sentiment error for {symbol}: {e}")
-        return 0
-
-def safe_float(val, default=0.0):
-    """Safely convert to float"""
-    try:
-        return float(val)
-    except (ValueError, TypeError):
-        return default
+        except Exception as e:
+            logger.warning(f"News sentiment error for {symbol} on attempt {attempt + 1}/{retries}: {str(e)}")
+            if attempt == retries - 1:
+                return 0
+            time.sleep(random.uniform(1, 3))
+    return 0
 
 def analyze_stock(symbol):
     """Analyze a single stock"""
@@ -1101,46 +1112,67 @@ def analyze_stock(symbol):
             "sector": SECTOR_MAPPING.get(symbol, "Unknown")
         }
 
-def analyze_all_stocks():
-    """Analyze all stocks in parallel"""
-    logger.info("Starting parallel stock analysis...")
-    
-    results = []
-    recommendations = {"BUY": 0, "HOLD": 0, "SELL": 0, "UNKNOWN": 0}
-
-    with ThreadPoolExecutor(max_workers=5) as executor:
-        future_to_symbol = {
-            executor.submit(analyze_stock, symbol): symbol 
-            for symbol in STOCK_LIST
-        }
-        
-        for future in as_completed(future_to_symbol):
-            symbol = future_to_symbol[future]
-            try:
-                analysis = future.result()
-                rec = analysis.get("recommendation", "UNKNOWN")
-                recommendations[rec] += 1
-                results.append(analysis)
-            except Exception as e:
-                logger.error(f"Error processing {symbol}: {str(e)}")
-                results.append(create_fallback_entry(symbol))
-                recommendations["HOLD"] += 1
-
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    data = {
-        "stocks": results,
-        "summary": recommendations,
-        "last_updated": timestamp
-    }
-    
+def analyze_stock(symbol):
+    """Analyze a single stock"""
     try:
-        with open('data/stock_analysis.json', 'w') as f:
-            json.dump(data, f, indent=2)
+        info = get_stock_info(symbol)
+        history = get_historical_data(symbol)
+        news_sentiment = get_news_sentiment(symbol, retries=3)  # Add retries
+        history_1d = get_price_history(symbol, "1D")
+
+        current_price = history.get("current_price") or info.get("current_price")
+        percent_change = safe_float(history.get("percent_change_2w", 0))
+        volatility = safe_float(history.get("volatility", 5))
+
+        technical_indicators = history.get("technical_indicators", {})
+        rsi_str = str(technical_indicators.get("rsi", "50"))
+        macd_str = str(technical_indicators.get("macd", "0"))
+
+        rsi = safe_float(rsi_str.split("(")[-1].replace(")", ""), default=50)
+        macd = safe_float(macd_str.split("(")[-1].replace(")", ""), default=0)
+        volume_score = 1 if "Increasing" in technical_indicators.get("volume_analysis", "") else 0
+        sentiment_score = safe_float(news_sentiment, 0)
+
+        features = np.array([[rsi, macd, volume_score, percent_change, volatility]])
+        pred = model.predict(features)[0]
+        recommendation = label_encoder.inverse_transform([pred])[0]
+
+        reason = (
+            f"🤖 ML-based prediction using "
+            f"RSI={rsi:.1f}, MACD={macd:.2f}, Change={percent_change:.2f}%, "
+            f"Volatility={volatility:.2f}, Volume={volume_score}"
+        )
+
+        logger.info(f"{symbol} → ML RECOMMEND: {recommendation}")
+
+        return {
+            "symbol": symbol,
+            "name": info.get("name", symbol),
+            "recommendation": recommendation,
+            "percent_change_2w": percent_change,
+            "current_price": current_price,
+            "reason": reason,
+            "technical_indicators": technical_indicators,
+            "news_sentiment": news_sentiment,
+            "history_1d": history_1d,
+            "sector": info.get("sector", SECTOR_MAPPING.get(symbol, "Unknown"))
+        }
     except Exception as e:
-        logger.error(f"Error saving analysis: {str(e)}")
-    
-    logger.info(f"Parallel analysis complete. Processed {len(results)} stocks.")
-    return data
+        logger.error(f"Error analyzing {symbol}: {str(e)}")
+        return {
+            "symbol": symbol,
+            "name": symbol,
+            "recommendation": "HOLD",
+            "percent_change_2w": 0,
+            "current_price": 100.0,
+            "reason": "⚠️ Analysis failed. Defaulting to HOLD.",
+            "technical_indicators": {
+                "rsi": "N/A", "macd": "N/A", 
+                "volume_analysis": "N/A", "trend": "N/A"
+            },
+            "history_1d": [],
+            "sector": SECTOR_MAPPING.get(symbol, "Unknown")
+        }
 
 def create_fallback_entry(symbol):
     """Create a fallback stock entry"""
