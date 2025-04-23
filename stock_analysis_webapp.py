@@ -435,57 +435,58 @@ html_template = """
       }
     }
 
-    function renderStockChart(canvasId, historyData, period) {
-      const ctx = document.getElementById(canvasId).getContext('2d');
-      // Clear previous chart if it exists
-      if (ctx.chart) {
-        ctx.chart.destroy();
-      }
-      const dates = historyData.map(item => item.date);
-      const prices = historyData.map(item => item.close);
-      const isIntraday = period === '1D';
-      ctx.chart = new Chart(ctx, {
-        type: 'line',
-        data: {
-          labels: dates,
-          datasets: [{
-            label: 'Price',
-            data: prices,
-            borderColor: 'rgba(75, 192, 192, 1)',
-            tension: 0.2,
-            fill: false
-          }]
-        },
-        options: {
-          responsive: true,
-          plugins: {
-            legend: { display: false }
-          },
-          scales: {
-            x: {
-              ticks: {
-                maxTicksLimit: isIntraday ? 8 : 5, // More ticks for intraday to show hourly trends
-                autoSkip: true,
-                callback: function(value, index, values) {
-                  if (isIntraday) {
-                    // For intraday, show time in HH:MM format
-                    const date = new Date(dates[index]);
-                    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-                  } else {
-                    // For 1W and 1M, show date
-                    return dates[index];
-                  }
-                }
+ function renderStockChart(canvasId, historyData, period) {
+  const ctx = document.getElementById(canvasId).getContext('2d');
+  // Clear previous chart if it exists
+  if (ctx.chart) {
+    ctx.chart.destroy();
+  }
+  const dates = historyData.map(item => item.date);
+  const prices = historyData.map(item => item.close);
+  const isIntraday = period === '1D';
+  ctx.chart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: dates,
+      datasets: [{
+        label: 'Price',
+        data: prices,
+        borderColor: 'rgba(75, 192, 192, 1)',
+        tension: 0.2,
+        fill: false
+      }]
+    },
+    options: {
+      responsive: true,
+      plugins: {
+        legend: { display: false }
+      },
+      scales: {
+        x: {
+          ticks: {
+            maxTicksLimit: isIntraday ? 8 : 5, // More ticks for intraday to show hourly trends
+            autoSkip: true,
+            callback: function(value, index, values) {
+              if (isIntraday) {
+                // For intraday, show time in HH:MM format
+                const date = new Date(dates[index]);
+                return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+              } else {
+                // For 1W and 1M, show date in "MMM DD" format (e.g., "Apr 01")
+                const date = new Date(dates[index]);
+                return date.toLocaleDateString('en-US', { month: 'short', day: '2-digit' });
               }
-            },
-            y: {
-              display: canvasId !== 'modalChart', // Show Y-axis only in small charts
-              beginAtZero: false
             }
           }
+        },
+        y: {
+          display: canvasId !== 'modalChart', // Show Y-axis only in small charts
+          beginAtZero: false
         }
-      });
+      }
     }
+  });
+}
 
     async function getLivePrediction(symbol, index) {
       try {
@@ -762,7 +763,7 @@ def get_price_history(symbol, period):
                 if period == "1D" and is_market_open() and dt > datetime.utcnow():
                     continue
                 history.append({
-                    'date': dt.strftime('%Y-%m-%d %H:%M:%S' if interval == "1m" else '%Y-%m-d'),
+                    'date': dt.strftime('%Y-%m-%d %H:%M:%S' if interval == "1m" else '%Y-%m-%d'),  # Fixed date format
                     'close': close
                 })
         if not history:
