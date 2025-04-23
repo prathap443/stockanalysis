@@ -9,16 +9,25 @@ import random
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import joblib
 import numpy as np
+import pandas as pd
 from textblob import TextBlob  # For basic sentiment analysis
+import ta  # For technical indicators (RSI, MACD, etc.)
 
 # Load pre-trained model and label encoder
 model = joblib.load("stock_predictor.pkl")
 label_encoder = joblib.load("label_encoder.pkl")
 
+# Define the feature columns expected by the model (same as in training)
+FEATURE_COLUMNS = [
+    'RSI', 'MACD', 'SMA_50', 'BB_Width', 'PE_Ratio',
+    'Dividend_Yield', 'News_Sentiment', 'volume_score',
+    'percent_change_5d', 'volatility'
+]
+
 # Setup logging
 logging.basicConfig(level=logging.INFO, 
                     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+logger = logging.getLogger('stock_analysis_webapp')
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -84,7 +93,7 @@ SECTOR_MAPPING = {
     "XOM": "Energy"
 }
 
-# HTML template with modal and expand icon
+# HTML template (same as before)
 html_template = """
 <!DOCTYPE html>
 <html lang="en" data-theme="light">
@@ -627,7 +636,7 @@ def is_market_open():
     return market_open <= est_time <= market_close
 
 def fetch_yahoo_finance_data(symbol, start, end, interval, retries=3):
-    """Fetch data from Yahoo Finance with retry logic"""
+    """Fetch data fromklik Yahoo Finance with retry logic"""
     url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?period1={start}&period2={end}&interval={interval}"
     headers = {"User-Agent": "Mozilla/5.0"}
     
@@ -763,7 +772,7 @@ def get_price_history(symbol, period):
                 if period == "1D" and is_market_open() and dt > datetime.utcnow():
                     continue
                 history.append({
-                    'date': dt.strftime('%Y-%m-%d %H:%M:%S' if interval == "1m" else '%Y-%m-%d'),  # Fixed date format
+                    'date': dt.strftime('%Y-%m-%d %H:%M:%S' if interval == "1m" else '%Y-%m-%d'),
                     'close': close
                 })
         if not history:
@@ -795,7 +804,8 @@ def get_stock_info(symbol):
                 "sector": quote.get('sector', SECTOR_MAPPING.get(symbol, "Unknown")),
                 "industry": quote.get('industry', "Unknown"),
                 "market_cap": quote.get('marketCap', None),
-                "pe_ratio": quote.get('trailingPE', None)
+                "pe_ratio": quote.get('trailingPE', None),
+                "dividend_yield": quote.get('dividendYield', 0.0)  # Add dividend yield
             }
         else:
             return get_stock_info_by_scraping(symbol)
@@ -846,7 +856,9 @@ def get_stock_info_by_scraping(symbol):
             "name": name if name else symbol,
             "current_price": price,
             "sector": SECTOR_MAPPING.get(symbol, "Unknown"),
-            "industry": "Unknown"
+            "industry": "Unknown",
+            "pe_ratio": None,
+            "dividend_yield": 0.0
         }
     except Exception as e:
         logger.error(f"Error scraping info for {symbol}: {str(e)}")
@@ -854,10 +866,12 @@ def get_stock_info_by_scraping(symbol):
             "symbol": symbol,
             "name": symbol,
             "current_price": None,
-            "sector": SECTOR_MAPPING.get(symbol, "Unknown")
+            "sector": SECTOR_MAPPING.get(symbol, "Unknown"),
+            "pe_ratio": None,
+            "dividend_yield": 0.0
         }
 
-def get_historical_data(symbol, days=14):
+def get_historical_data(symbol, days=60):  # Increased to 60 days to ensure enough data for SMA_50
     """Get historical price data for analysis with improved reliability"""
     time.sleep(random.uniform(0.5, 1.5))  # Randomized delay to avoid rate limiting
     
@@ -885,18 +899,40 @@ def get_historical_data(symbol, days=14):
         quotes = result["indicators"]["quote"][0]
         close_prices = quotes["close"]
         volumes = quotes.get("volume", [])
+        highs = quotes.get("high", [])
+        lows = quotes.get("low", [])
         
         valid_data = []
         for i in range(len(timestamps)):
             price = close_prices[i] if i < len(close_prices) else None
             volume = volumes[i] if i < len(volumes) else None
-            if price is not None:
-                valid_data.append((timestamps[i], price, volume))
+            high = highs[i] if i < len(highs) else None
+            low = lows[i] if i < len(lows) else None
+            if price is not None and high is not None and low is not None:
+                valid_data.append((timestamps[i], price, volume, high, low))
         
         if len(valid_data) < 2:
             return calculate_fallback_data(symbol)
         
-        timestamps, prices, volumes = zip(*valid_data)
+        timestamps, prices, volumes, highs, lows = zip(*valid_data)
+        
+        # Convert to DataFrame for technical indicator calculations
+        df = pd.DataFrame({
+            'Close': prices,
+            'Volume': volumes,
+            'High': highs,
+            'Low': lows
+        })
+        
+        # Calculate technical indicators
+        df['RSI'] = ta.momentum.RSIIndicator(df['Close'], window=14).rsi()
+        macd = ta.trend.MACD(df['Close'], window_slow=26, window_fast=12, window_sign=9)
+        df['MACD'] = macd.macd()
+        df['SMA_50'] = ta.trend.SMAIndicator(df['Close'], window=50).sma_indicator()
+        bollinger = ta.volatility.BollingerBands(df['Close'], window=20, window_dev=2)
+        df['BB_High'] = bollinger.bollinger_hband()
+        df['BB_Low'] = bollinger.bollinger_lband()
+        df['BB_Width'] = (df['BB_High'] - df['BB_Low']) / df['Close']
         
         start_price = prices[0]
         end_price = prices[-1]
@@ -905,29 +941,41 @@ def get_historical_data(symbol, days=14):
         price_change = end_price - start_price
         percent_change = (price_change / start_price) * 100
         
+        # Calculate 5-day percent change
+        prices_series = pd.Series(prices)
+        percent_change_5d = prices_series.pct_change(periods=5).iloc[-1] * 100 if len(prices) >= 5 else 0
+        
         daily_returns = [(prices[i] - prices[i-1]) / prices[i-1] * 100 for i in range(1, len(prices))]
         volatility = sum([(ret - (sum(daily_returns)/len(daily_returns)))**2 for ret in daily_returns])
         volatility = (volatility / len(daily_returns))**0.5 if daily_returns else 0
         
-        rsi = calculate_rsi(prices)
-        macd = calculate_macd(prices)
         volume_trend = analyze_volume(volumes)
         
         trend = "Neutral"
         bullish_signals = 0
         bearish_signals = 0
         
-        if "Oversold" in rsi: bullish_signals += 1
-        elif "Overbought" in rsi: bearish_signals += 1
+        rsi_value = df['RSI'].iloc[-1] if not pd.isna(df['RSI'].iloc[-1]) else 50
+        if rsi_value > 70:
+            bearish_signals += 1
+        elif rsi_value < 30:
+            bullish_signals += 1
         
-        if "Bullish" in macd: bullish_signals += 1
-        elif "Bearish" in macd: bearish_signals += 1
+        macd_value = df['MACD'].iloc[-1] if not pd.isna(df['MACD'].iloc[-1]) else 0
+        if macd_value > 0.5:
+            bullish_signals += 1
+        elif macd_value < -0.5:
+            bearish_signals += 1
         
-        if percent_change > 5: bullish_signals += 1
-        elif percent_change < -5: bearish_signals += 1
+        if percent_change > 5:
+            bullish_signals += 1
+        elif percent_change < -5:
+            bearish_signals += 1
         
-        if "Increasing" in volume_trend: bullish_signals += 1
-        elif "Decreasing" in volume_trend: bearish_signals += 1
+        if "Increasing" in volume_trend:
+            bullish_signals += 1
+        elif "Decreasing" in volume_trend:
+            bearish_signals += 1
         
         if bullish_signals > bearish_signals:
             trend = "Bullish"
@@ -941,13 +989,16 @@ def get_historical_data(symbol, days=14):
             "current_price": end_price,
             "price_change": price_change,
             "percent_change_2w": percent_change,
+            "percent_change_5d": percent_change_5d,
             "high": high_price,
             "low": low_price,
             "volatility": volatility,
             "volume_trend": volume_trend,
             "technical_indicators": {
-                "rsi": rsi,
-                "macd": macd,
+                "rsi": f"{rsi_value:.1f}",
+                "macd": f"{macd_value:.2f}",
+                "sma_50": df['SMA_50'].iloc[-1] if not pd.isna(df['SMA_50'].iloc[-1]) else 0,
+                "bb_width": df['BB_Width'].iloc[-1] if not pd.isna(df['BB_Width'].iloc[-1]) else 0,
                 "volume_analysis": volume_trend,
                 "trend": trend
             }
@@ -961,11 +1012,14 @@ def calculate_fallback_data(symbol):
     return {
         "symbol": symbol,
         "percent_change_2w": random.uniform(-10, 10),
+        "percent_change_5d": random.uniform(-5, 5),
         "current_price": random.uniform(50, 500),
         "volatility": random.uniform(1, 8),
         "technical_indicators": {
             "rsi": f"{random.uniform(30, 70):.1f}",
             "macd": f"{random.uniform(-2, 2):.2f}",
+            "sma_50": 0,
+            "bb_width": 0,
             "volume_analysis": "Neutral",
             "trend": "Neutral"
         }
@@ -1086,31 +1140,58 @@ def analyze_stock(symbol):
     """Analyze a single stock"""
     try:
         info = get_stock_info(symbol)
-        history = get_historical_data(symbol)
-        news_sentiment = get_news_sentiment(symbol, retries=3)  # Add retries
+        history = get_historical_data(symbol, days=60)  # Fetch 60 days for SMA_50
+        news_sentiment = get_news_sentiment(symbol, retries=3)
         history_1d = get_price_history(symbol, "1D")
 
         current_price = history.get("current_price") or info.get("current_price")
-        percent_change = safe_float(history.get("percent_change_2w", 0))
+        percent_change_2w = safe_float(history.get("percent_change_2w", 0))
+        percent_change_5d = safe_float(history.get("percent_change_5d", 0))
         volatility = safe_float(history.get("volatility", 5))
 
         technical_indicators = history.get("technical_indicators", {})
         rsi_str = str(technical_indicators.get("rsi", "50"))
         macd_str = str(technical_indicators.get("macd", "0"))
+        sma_50 = safe_float(technical_indicators.get("sma_50", 0))
+        bb_width = safe_float(technical_indicators.get("bb_width", 0))
 
-        rsi = safe_float(rsi_str.split("(")[-1].replace(")", ""), default=50)
-        macd = safe_float(macd_str.split("(")[-1].replace(")", ""), default=0)
+        rsi = safe_float(rsi_str, default=50)
+        macd = safe_float(macd_str, default=0)
         volume_score = 1 if "Increasing" in technical_indicators.get("volume_analysis", "") else 0
         sentiment_score = safe_float(news_sentiment, 0)
+        pe_ratio = safe_float(info.get("pe_ratio", np.nan))
+        dividend_yield = safe_float(info.get("dividend_yield", 0))
 
-        features = np.array([[rsi, macd, volume_score, percent_change, volatility]])
-        pred = model.predict(features)[0]
+        # Create features DataFrame with the correct column names
+        features_dict = {
+            'RSI': rsi,
+            'MACD': macd,
+            'SMA_50': sma_50,
+            'BB_Width': bb_width,
+            'PE_Ratio': pe_ratio,
+            'Dividend_Yield': dividend_yield,
+            'News_Sentiment': sentiment_score,
+            'volume_score': volume_score,
+            'percent_change_5d': percent_change_5d,
+            'volatility': volatility
+        }
+        features_df = pd.DataFrame([features_dict], columns=FEATURE_COLUMNS)
+
+        # Handle missing values (same as in training)
+        features_df['PE_Ratio'] = features_df['PE_Ratio'].fillna(features_df['PE_Ratio'].median())
+        features_df['Dividend_Yield'] = features_df['Dividend_Yield'].fillna(0.0)
+        features_df['News_Sentiment'] = features_df['News_Sentiment'].fillna(0.0)
+
+        # Make prediction
+        pred = model.predict(features_df)[0]
         recommendation = label_encoder.inverse_transform([pred])[0]
 
         reason = (
             f"🤖 ML-based prediction using "
-            f"RSI={rsi:.1f}, MACD={macd:.2f}, Change={percent_change:.2f}%, "
-            f"Volatility={volatility:.2f}, Volume={volume_score}"
+            f"RSI={rsi:.1f}, MACD={macd:.2f}, SMA_50={sma_50:.2f}, BB_Width={bb_width:.2f}, "
+            f"PE_Ratio={pe_ratio:.2f}, Dividend_Yield={dividend_yield:.2f}, "
+            f"Sentiment={sentiment_score:.2f}, Volume_Score={volume_score}, "
+            f"Change_5d={percent_change_5d:.2f}%, Volatility={volatility:.2f}"
         )
 
         logger.info(f"{symbol} → ML RECOMMEND: {recommendation}")
@@ -1119,7 +1200,7 @@ def analyze_stock(symbol):
             "symbol": symbol,
             "name": info.get("name", symbol),
             "recommendation": recommendation,
-            "percent_change_2w": percent_change,
+            "percent_change_2w": percent_change_2w,
             "current_price": current_price,
             "reason": reason,
             "technical_indicators": technical_indicators,
@@ -1257,19 +1338,29 @@ def predict():
     """Predict recommendation for given features"""
     try:
         data = request.get_json()
-        features = [
-            data.get("rsi", 50),
-            data.get("macd", 0),
-            data.get("volume_score", 0),
-            data.get("percent_change_2w", 0),
-            data.get("volatility", 0)
-        ]
-        X = np.array([features])
-        prediction = model.predict(X)[0]
+        features_dict = {
+            'RSI': data.get("rsi", 50),
+            'MACD': data.get("macd", 0),
+            'SMA_50': data.get("sma_50", 0),
+            'BB_Width': data.get("bb_width", 0),
+            'PE_Ratio': data.get("pe_ratio", np.nan),
+            'Dividend_Yield': data.get("dividend_yield", 0),
+            'News_Sentiment': data.get("news_sentiment", 0),
+            'volume_score': data.get("volume_score", 0),
+            'percent_change_5d': data.get("percent_change_5d", 0),
+            'volatility': data.get("volatility", 0)
+        }
+        features_df = pd.DataFrame([features_dict], columns=FEATURE_COLUMNS)
+        # Handle missing values
+        features_df['PE_Ratio'] = features_df['PE_Ratio'].fillna(features_df['PE_Ratio'].median())
+        features_df['Dividend_Yield'] = features_df['Dividend_Yield'].fillna(0.0)
+        features_df['News_Sentiment'] = features_df['News_Sentiment'].fillna(0.0)
+
+        prediction = model.predict(features_df)[0]
         recommendation = label_encoder.inverse_transform([prediction])[0]
         return jsonify({
             "recommendation": recommendation,
-            "reason": f"ML-based prediction using RSI={features[0]}, MACD={features[1]}, volume={features[2]}, change={features[3]}, volatility={features[4]}"
+            "reason": f"ML-based prediction using RSI={features_df['RSI'][0]}, MACD={features_df['MACD'][0]}, volume_score={features_df['volume_score'][0]}, change={features_df['percent_change_5d'][0]}, volatility={features_df['volatility'][0]}"
         })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -1283,7 +1374,7 @@ def live_prediction(symbol):
         if not history_1d or ('error' in history_1d[0] and history_1d[0]['error']):
             return jsonify({"error": "Insufficient intraday data for prediction"}), 400
 
-        # Fetch current stock info
+        # Fetch current stock info (for P/E ratio and dividend yield)
         info = get_stock_info(symbol)
         news_sentiment = get_news_sentiment(symbol)
 
@@ -1295,23 +1386,53 @@ def live_prediction(symbol):
         current_price = prices[-1] if prices else info.get("current_price", 100.0)
 
         # Compute technical indicators
-        rsi = calculate_rsi(prices)
-        macd = calculate_macd(prices)
+        df = pd.DataFrame({'Close': prices})
+        df['RSI'] = ta.momentum.RSIIndicator(df['Close'], window=14).rsi()
+        macd = ta.trend.MACD(df['Close'], window_slow=26, window_fast=12, window_sign=9)
+        df['MACD'] = macd.macd()
+        df['SMA_50'] = ta.trend.SMAIndicator(df['Close'], window=50).sma_indicator()
+        bollinger = ta.volatility.BollingerBands(df['Close'], window=20, window_dev=2)
+        df['BB_Width'] = (bollinger.bollinger_hband() - bollinger.bollinger_lband()) / df['Close']
 
         # Compute percent change and volatility
         start_price = prices[0]
         percent_change = ((current_price - start_price) / start_price) * 100 if start_price else 0
+        prices_series = pd.Series(prices)
+        percent_change_5d = prices_series.pct_change(periods=5).iloc[-1] * 100 if len(prices) >= 5 else 0
         daily_returns = [(prices[i] - prices[i-1]) / prices[i-1] * 100 for i in range(1, len(prices))]
         volatility = (sum([(ret - (sum(daily_returns)/len(daily_returns)))**2 for ret in daily_returns]) / len(daily_returns))**0.5 if daily_returns else 5
 
         # Extract features for prediction
-        rsi_value = safe_float(rsi.split("(")[-1].replace(")", ""), default=50)
-        macd_value = safe_float(macd.split("(")[-1].replace(")", ""), default=0)
+        rsi_value = df['RSI'].iloc[-1] if not pd.isna(df['RSI'].iloc[-1]) else 50
+        macd_value = df['MACD'].iloc[-1] if not pd.isna(df['MACD'].iloc[-1]) else 0
+        sma_50 = df['SMA_50'].iloc[-1] if not pd.isna(df['SMA_50'].iloc[-1]) else 0
+        bb_width = df['BB_Width'].iloc[-1] if not pd.isna(df['BB_Width'].iloc[-1]) else 0
         volume_score = 1 if len(prices) > 10 and prices[-1] > prices[-2] else 0  # Simplified volume trend
+        pe_ratio = safe_float(info.get("pe_ratio", np.nan))
+        dividend_yield = safe_float(info.get("dividend_yield", 0))
+
+        # Create features DataFrame
+        features_dict = {
+            'RSI': rsi_value,
+            'MACD': macd_value,
+            'SMA_50': sma_50,
+            'BB_Width': bb_width,
+            'PE_Ratio': pe_ratio,
+            'Dividend_Yield': dividend_yield,
+            'News_Sentiment': news_sentiment,
+            'volume_score': volume_score,
+            'percent_change_5d': percent_change_5d,
+            'volatility': volatility
+        }
+        features_df = pd.DataFrame([features_dict], columns=FEATURE_COLUMNS)
+
+        # Handle missing values
+        features_df['PE_Ratio'] = features_df['PE_Ratio'].fillna(features_df['PE_Ratio'].median())
+        features_df['Dividend_Yield'] = features_df['Dividend_Yield'].fillna(0.0)
+        features_df['News_Sentiment'] = features_df['News_Sentiment'].fillna(0.0)
 
         # Make prediction
-        features = np.array([[rsi_value, macd_value, volume_score, percent_change, volatility]])
-        pred = model.predict(features)[0]
+        pred = model.predict(features_df)[0]
         recommendation = label_encoder.inverse_transform([pred])[0]
 
         return jsonify({
@@ -1320,8 +1441,8 @@ def live_prediction(symbol):
             "current_price": current_price,
             "percent_change_today": percent_change,
             "technical_indicators": {
-                "rsi": rsi,
-                "macd": macd,
+                "rsi": f"{rsi_value:.1f}",
+                "macd": f"{macd_value:.2f}",
                 "trend": "Bullish" if percent_change > 0 else "Bearish"
             },
             "news_sentiment": news_sentiment,
@@ -1346,5 +1467,5 @@ if __name__ == "__main__":
             analyze_all_stocks()
         except Exception as e:
             logger.error(f"Initial analysis error: {str(e)}")
-    port = int(os.getenv("PORT", 5000))
+    port = int(os.getenv("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
