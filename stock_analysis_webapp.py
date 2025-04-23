@@ -341,7 +341,7 @@ html_template = """
                   <h5>${stock.symbol}</h5>
                   <small class="text-muted">Yahoo Finance</small><br/>
                   <strong>$${stock.current_price?.toFixed(2) || 'N/A'}</strong><br/>
-                  <span class="text-muted small">${stock.news_sentiment || ''}</span>
+                  <span class="text-muted small">Sentiment: ${stock.news_sentiment !== undefined ? stock.news_sentiment.toFixed(3) : 'N/A'}</span>
                 </div>
                 <div class="text-end ${trendColor}">
                   <strong>${trendIcon}${stock.percent_change_2w.toFixed(2)}%</strong><br/>
@@ -648,6 +648,37 @@ def fetch_yahoo_finance_data(symbol, start, end, interval, retries=3):
                 logger.error(f"Failed to fetch data for {symbol} after {retries} attempts: {str(e)}")
                 return None
 
+def safe_float(value, default=0.0):
+    """Safely convert a value to float, returning a default if conversion fails"""
+    try:
+        return float(value)
+    except (ValueError, TypeError):
+        return default
+
+def get_last_trading_day(end_dt):
+    """Get the last trading day before the given datetime"""
+    est_offset = timedelta(hours=-5)  # Convert UTC to EST
+    est_time = end_dt + est_offset
+
+    # Determine the last trading day
+    last_trading_day = end_dt
+    if est_time.weekday() == 5:  # Saturday
+        last_trading_day -= timedelta(days=1)  # Go back to Friday
+    elif est_time.weekday() == 6:  # Sunday
+        last_trading_day -= timedelta(days=2)  # Go back to Friday
+    elif est_time.weekday() == 0 and est_time.hour < 14:  # Monday before market open (14:30 UTC = 9:30 EST)
+        last_trading_day -= timedelta(days=3)  # Go back to Friday
+    elif est_time.hour < 14:  # Before market open on a weekday
+        last_trading_day -= timedelta(days=1)  # Go back to the previous day
+
+    # Ensure we don't go back to a weekend
+    est_last_trading = last_trading_day + est_offset
+    while est_last_trading.weekday() >= 5:  # Saturday or Sunday
+        last_trading_day -= timedelta(days=1)
+        est_last_trading = last_trading_day + est_offset
+
+    return last_trading_day
+
 def get_price_history(symbol, period):
     """Get price history for a specific period (1D, 1W, 1M, or 14D)"""
     now = datetime.utcnow()
@@ -779,7 +810,7 @@ def get_stock_info_by_scraping(symbol):
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
         }
         
-        response = requests.get(url, headers=headers, timeout=15)  # Fixed: Removed the extra '15'
+        response = requests.get(url, headers=headers, timeout=15)
         
         price = None
         name = symbol
@@ -1055,68 +1086,6 @@ def analyze_stock(symbol):
     try:
         info = get_stock_info(symbol)
         history = get_historical_data(symbol)
-        news_sentiment = get_news_sentiment(symbol)
-        history_1d = get_price_history(symbol, "1D")  # Fetch intraday data
-
-        current_price = history.get("current_price") or info.get("current_price")
-        percent_change = safe_float(history.get("percent_change_2w", 0))
-        volatility = safe_float(history.get("volatility", 5))
-
-        technical_indicators = history.get("technical_indicators", {})
-        rsi_str = str(technical_indicators.get("rsi", "50"))
-        macd_str = str(technical_indicators.get("macd", "0"))
-
-        rsi = safe_float(rsi_str.split("(")[-1].replace(")", ""), default=50)
-        macd = safe_float(macd_str.split("(")[-1].replace(")", ""), default=0)
-        volume_score = 1 if "Increasing" in technical_indicators.get("volume_analysis", "") else 0
-        sentiment_score = safe_float(news_sentiment, 0)
-
-        features = np.array([[rsi, macd, volume_score, percent_change, volatility]])
-        pred = model.predict(features)[0]
-        recommendation = label_encoder.inverse_transform([pred])[0]
-
-        reason = (
-            f"🤖 ML-based prediction using "
-            f"RSI={rsi:.1f}, MACD={macd:.2f}, Change={percent_change:.2f}%, "
-            f"Volatility={volatility:.2f}, Volume={volume_score}"
-        )
-
-        logger.info(f"{symbol} → ML RECOMMEND: {recommendation}")
-
-        return {
-            "symbol": symbol,
-            "name": info.get("name", symbol),
-            "recommendation": recommendation,
-            "percent_change_2w": percent_change,
-            "current_price": current_price,
-            "reason": reason,
-            "technical_indicators": technical_indicators,
-            "news_sentiment": news_sentiment,
-            "history_1d": history_1d,
-            "sector": info.get("sector", SECTOR_MAPPING.get(symbol, "Unknown"))
-        }
-    except Exception as e:
-        logger.error(f"Error analyzing {symbol}: {str(e)}")
-        return {
-            "symbol": symbol,
-            "name": symbol,
-            "recommendation": "HOLD",
-            "percent_change_2w": 0,
-            "current_price": 100.0,
-            "reason": "⚠️ Analysis failed. Defaulting to HOLD.",
-            "technical_indicators": {
-                "rsi": "N/A", "macd": "N/A", 
-                "volume_analysis": "N/A", "trend": "N/A"
-            },
-            "history_1d": [],
-            "sector": SECTOR_MAPPING.get(symbol, "Unknown")
-        }
-
-def analyze_stock(symbol):
-    """Analyze a single stock"""
-    try:
-        info = get_stock_info(symbol)
-        history = get_historical_data(symbol)
         news_sentiment = get_news_sentiment(symbol, retries=3)  # Add retries
         history_1d = get_price_history(symbol, "1D")
 
@@ -1190,6 +1159,48 @@ def create_fallback_entry(symbol):
         "history_1d": [],
         "sector": SECTOR_MAPPING.get(symbol, "Unknown")
     }
+
+def analyze_all_stocks():
+    """Analyze all stocks and cache the results"""
+    try:
+        # Use ThreadPoolExecutor for parallel processing
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            future_to_symbol = {executor.submit(analyze_stock, symbol): symbol for symbol in STOCK_LIST}
+            stocks = []
+            for future in as_completed(future_to_symbol):
+                symbol = future_to_symbol[future]
+                try:
+                    result = future.result()
+                    stocks.append(result)
+                except Exception as e:
+                    logger.error(f"Error analyzing {symbol}: {str(e)}")
+                    stocks.append(create_fallback_entry(symbol))
+
+        # Sort stocks by symbol
+        stocks.sort(key=lambda x: x['symbol'])
+
+        # Compute summary of recommendations
+        summary = {"BUY": 0, "HOLD": 0, "SELL": 0}
+        for stock in stocks:
+            recommendation = stock.get('recommendation', 'HOLD')
+            summary[recommendation] = summary.get(recommendation, 0) + 1
+
+        # Prepare the result
+        result = {
+            "stocks": stocks,
+            "summary": summary,
+            "last_updated": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        }
+
+        # Cache the results
+        with open('data/stock_analysis.json', 'w') as f:
+            json.dump(result, f, indent=2)
+
+        logger.info(f"Successfully analyzed {len(stocks)} stocks")
+        return result
+    except Exception as e:
+        logger.error(f"Error in analyze_all_stocks: {str(e)}")
+        return {"error": f"Analysis failed: {str(e)}"}
 
 @app.route('/')
 def index():
@@ -1334,4 +1345,5 @@ if __name__ == "__main__":
             analyze_all_stocks()
         except Exception as e:
             logger.error(f"Initial analysis error: {str(e)}")
-    app.run(host='0.0.0.0', port=5000)
+    port = int(os.getenv("PORT", 5000))
+    app.run(host='0.0.0.0', port=port)
