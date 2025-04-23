@@ -761,7 +761,7 @@ def get_stock_info_by_scraping(symbol):
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
         }
         
-        response = requests.get(url, headers=headers, timeout=15 15)
+        response = requests.get(url, headers=headers, timeout=15)  # Fixed: Removed the extra '15'
         
         price = None
         name = symbol
