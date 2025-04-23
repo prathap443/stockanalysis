@@ -1,5 +1,5 @@
 from flask import Flask, render_template, jsonify, request
-import yfinance as yf
+import requests
 import json
 import os
 import time
@@ -10,7 +10,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import joblib
 import numpy as np
 from textblob import TextBlob  # For basic sentiment analysis
-import pytz
 
 # Load pre-trained model and label encoder
 model = joblib.load("stock_predictor.pkl")
@@ -85,7 +84,7 @@ SECTOR_MAPPING = {
     "XOM": "Energy"
 }
 
-# HTML template with updated JavaScript for fallback chart rendering
+# HTML template with modal and expand icon (from previous update)
 html_template = """
 <!DOCTYPE html>
 <html lang="en" data-theme="light">
@@ -297,7 +296,6 @@ html_template = """
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
   <script>
     let allStocks = []; // Store all stock data for filtering
     let selectedRecommendation = ''; // Track the selected recommendation filter
@@ -385,31 +383,19 @@ html_template = """
           button.classList.add('active');
         }
 
-        // Try fetching data for the selected period, fall back to others if it fails
+        // Fetch new data for the selected period
+        const response = await fetch(`/api/stock_history/${symbol}/${period}`);
+        const historyData = await response.json();
         const chartContainer = document.getElementById(`chartContainer-${index}`);
-        const intervals = period === '1D' ? ['1D', '1W', '1M'] : [period]; // Try 1D, then 1W, then 1M
-        let historyData = null;
-        let successfulPeriod = period;
-
-        for (const interval of intervals) {
-          try {
-            const response = await fetch(`/api/stock_history/${symbol}/${interval}`);
-            const data = await response.json();
-            if (Array.isArray(data) && data.length > 0 && !data[0].error) {
-              historyData = data;
-              successfulPeriod = interval;
-              break;
-            }
-          } catch (error) {
-            console.warn(`Failed to fetch ${interval} data for ${symbol}:`, error);
+        if (historyData && historyData.length > 0) {
+          if (historyData[0].error) {
+            chartContainer.innerHTML = `<p class="small text-muted">${historyData[0].error}</p>`;
+          } else {
+            chartContainer.innerHTML = `<canvas id="chart-${index}" height="100"></canvas>`;
+            renderStockChart(`chart-${index}`, historyData, period);
           }
-        }
-
-        if (historyData) {
-          chartContainer.innerHTML = `<canvas id="chart-${index}" height="100"></canvas>`;
-          renderStockChart(`chart-${index}`, historyData, successfulPeriod);
         } else {
-          chartContainer.innerHTML = `<p class="small text-muted">No data available for ${symbol}.</p>`;
+          chartContainer.innerHTML = `<p class="small text-muted">No data available for ${period}.</p>`;
         }
       } catch (error) {
         console.error(`Error updating chart for ${symbol}:`, error);
@@ -419,28 +405,13 @@ html_template = """
 
     async function expandChart(symbol, index) {
       try {
-        // Try fetching 1D data for the expanded chart, fall back to 1W or 1M
-        const intervals = ['1D', '1W', '1M'];
-        let historyData = null;
-        let successfulPeriod = '1D';
+        // Fetch the 1D data for the expanded chart
+        const response = await fetch(`/api/stock_history/${symbol}/1D`);
+        const historyData = await response.json();
 
-        for (const interval of intervals) {
-          try {
-            const response = await fetch(`/api/stock_history/${symbol}/${interval}`);
-            const data = await response.json();
-            if (Array.isArray(data) && data.length > 0 && !data[0].error) {
-              historyData = data;
-              successfulPeriod = interval;
-              break;
-            }
-          } catch (error) {
-            console.warn(`Failed to fetch ${interval} data for ${symbol} in expanded view:`, error);
-          }
-        }
-
-        if (historyData) {
+        if (historyData && historyData.length > 0 && !historyData[0].error) {
           // Update modal title
-          document.getElementById('chartModalLabel').innerText = `${symbol} - ${successfulPeriod} Chart`;
+          document.getElementById('chartModalLabel').innerText = `${symbol} - 1D Chart (Intraday)`;
 
           // Clear previous chart in the modal if it exists
           const modalCanvas = document.getElementById('modalChart');
@@ -450,13 +421,13 @@ html_template = """
           }
 
           // Render the chart in the modal
-          renderStockChart('modalChart', historyData, successfulPeriod);
+          renderStockChart('modalChart', historyData, '1D');
 
           // Show the modal
           const chartModal = new bootstrap.Modal(document.getElementById('chartModal'));
           chartModal.show();
         } else {
-          alert('No data available to display in expanded view.');
+          alert('No 1D data available to display in expanded view.');
         }
       } catch (error) {
         console.error(`Error expanding chart for ${symbol}:`, error);
@@ -470,13 +441,13 @@ html_template = """
       if (ctx.chart) {
         ctx.chart.destroy();
       }
-      const timestamps = historyData.map(item => item.timestamp * 1000);
+      const dates = historyData.map(item => item.date);
       const prices = historyData.map(item => item.close);
       const isIntraday = period === '1D';
       ctx.chart = new Chart(ctx, {
         type: 'line',
         data: {
-          labels: timestamps,
+          labels: dates,
           datasets: [{
             label: 'Price',
             data: prices,
@@ -492,20 +463,23 @@ html_template = """
           },
           scales: {
             x: {
-              type: 'time',
-              time: {
-                unit: isIntraday ? 'hour' : (period === '1W' ? 'day' : 'day'),
-                displayFormats: {
-                  hour: 'HH:mm',
-                  day: 'MMM D'
-                }
-              },
               ticks: {
-                maxTicksLimit: isIntraday ? 8 : 5
+                maxTicksLimit: isIntraday ? 8 : 5, // More ticks for intraday to show hourly trends
+                autoSkip: true,
+                callback: function(value, index, values) {
+                  if (isIntraday) {
+                    // For intraday, show time in HH:MM format
+                    const date = new Date(dates[index]);
+                    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                  } else {
+                    // For 1W and 1M, show date
+                    return dates[index];
+                  }
+                }
               }
             },
             y: {
-              display: canvasId !== 'modalChart',
+              display: canvasId !== 'modalChart', // Show Y-axis only in small charts
               beginAtZero: false
             }
           }
@@ -637,86 +611,116 @@ with open('templates/index.html', 'w') as f:
 
 def is_market_open():
     """Check if U.S. markets are open (9:30 AM to 4:00 PM EST)"""
-    now = datetime.now(pytz.timezone('America/New_York'))
-    market_open = now.replace(hour=9, minute=30, second=0, microsecond=0)
-    market_close = now.replace(hour=16, minute=0, second=0, microsecond=0)
-    if now.weekday() >= 5:  # Saturday or Sunday
+    now = datetime.utcnow()  # Use UTC for consistency
+    # Convert UTC to EST (UTC-5)
+    est_offset = timedelta(hours=-5)
+    est_time = now + est_offset
+    market_open = est_time.replace(hour=9, minute=30, second=0, microsecond=0)
+    market_close = est_time.replace(hour=16, minute=0, second=0, microsecond=0)
+    # Adjust for the current day
+    market_open = market_open.replace(year=est_time.year, month=est_time.month, day=est_time.day)
+    market_close = market_close.replace(year=est_time.year, month=est_time.month, day=est_time.day)
+    # Check if it's a weekday (Monday=0, Sunday=6)
+    if est_time.weekday() >= 5:  # Saturday or Sunday
         return False
-    return market_open <= now <= market_close
+    return market_open <= est_time <= market_close
 
-def get_last_trading_day():
-    """Determine the timestamps for the last trading day"""
-    now = datetime.now(pytz.UTC)
-    # Convert to EST
-    est = pytz.timezone('America/New_York')
-    now_est = now.astimezone(est)
-
-    # If today is a weekend, roll back to Friday
-    if now_est.weekday() == 5:  # Saturday
-        now_est -= timedelta(days=1)
-    elif now_est.weekday() == 6:  # Sunday
-        now_est -= timedelta(days=2)
-
-    # If current time is before market open, use the previous trading day
-    market_open = now_est.replace(hour=9, minute=30, second=0, microsecond=0)
-    if now_est < market_open and now_est.weekday() in [0, 1, 2, 3, 4]:
-        now_est -= timedelta(days=1)
-
-    # If after market close or during market hours, use today; otherwise adjust
-    market_close = now_est.replace(hour=16, minute=0, second=0, microsecond=0)
-    if now_est > market_close and now_est.weekday() in [0, 1, 2, 3, 4]:
-        end_time = market_close
-    else:
-        end_time = now_est if now_est.weekday() in [0, 1, 2, 3, 4] else market_close
-
-    start_time = end_time - timedelta(days=1)
-    # Convert back to UTC for yfinance
-    start_time = start_time.astimezone(pytz.UTC)
-    end_time = end_time.astimezone(pytz.UTC)
-    return start_time, end_time
+def fetch_yahoo_finance_data(symbol, start, end, interval, retries=3):
+    """Fetch data from Yahoo Finance with retry logic"""
+    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?period1={start}&period2={end}&interval={interval}"
+    headers = {"User-Agent": "Mozilla/5.0"}
+    
+    for attempt in range(retries):
+        try:
+            response = requests.get(url, headers=headers, timeout=10)
+            response.raise_for_status()
+            data = response.json()
+            if 'chart' in data and 'result' in data['chart'] and data['chart']['result']:
+                return data
+            else:
+                logger.warning(f"No data found for {symbol} (interval={interval}): {data.get('chart', {}).get('error', 'Unknown error')}")
+                return data
+        except requests.exceptions.RequestException as e:
+            logger.warning(f"Attempt {attempt + 1}/{retries} failed for {symbol}: {str(e)}")
+            if attempt < retries - 1:
+                time.sleep(random.uniform(1, 3))  # Random delay before retry
+            else:
+                logger.error(f"Failed to fetch data for {symbol} after {retries} attempts: {str(e)}")
+                return None
 
 def get_price_history(symbol, period):
-    """Get price history for a specific period (1D, 1W, 1M, or 14D) using yfinance"""
-    try:
-        stock = yf.Ticker(symbol)
-        if period == "1D":
-            start_dt, end_dt = get_last_trading_day()
-            data = stock.history(start=start_dt, end=end_dt, interval='1m')
-        elif period == "1W":
-            data = stock.history(period='1wk', interval='1h')
-        elif period == "1M":
-            data = stock.history(period='1mo', interval='1d')
-        else:  # Default to 14 days
-            data = stock.history(period='2wk', interval='1d')
+    """Get price history for a specific period (1D, 1W, 1M, or 14D)"""
+    end = int(time.time())
+    interval = "1d"  # Default interval
+    start = end
 
-        if data.empty:
+    if period == "1D":
+        if is_market_open():
+            start = end - 60*60*24*1  # 1 day
+            interval = "1m"  # 1-minute intervals for intraday
+        else:
+            # After market hours, fetch the current day's data (if today is a trading day)
+            now = datetime.utcnow()
+            est_offset = timedelta(hours=-5)
+            est_time = now + est_offset
+            
+            # Determine the last trading day
+            last_trading_day = now
+            if est_time.weekday() == 5:  # Saturday
+                last_trading_day -= timedelta(days=1)  # Go back to Friday
+            elif est_time.weekday() == 6:  # Sunday
+                last_trading_day -= timedelta(days=2)  # Go back to Friday
+            elif est_time.weekday() == 0 and est_time.hour < 9:  # Monday before market open
+                last_trading_day -= timedelta(days=3)  # Go back to Friday
+            
+            # Set the time range for the last trading day (9:30 AM to 4:00 PM EST)
+            start_dt = last_trading_day.replace(hour=14, minute=30, second=0, microsecond=0)  # 9:30 AM EST (14:30 UTC)
+            end_dt = last_trading_day.replace(hour=21, minute=0, second=0, microsecond=0)  # 4:00 PM EST (21:00 UTC)
+            start = int(start_dt.timestamp())
+            end = int(end_dt.timestamp())
+            interval = "1m"
+    elif period == "1W":
+        start = end - 60*60*24*7  # 7 days
+        interval = "1d"
+    elif period == "1M":
+        start = end - 60*60*24*30  # 30 days
+        interval = "1d"
+    else:  # Default to 14 days
+        start = end - 60*60*24*14
+        interval = "1d"
+    
+    data = fetch_yahoo_finance_data(symbol, start, end, interval)
+    if not data:
+        return [{"error": f"Unable to fetch {period} data for {symbol} after multiple attempts."}]
+
+    try:
+        if 'error' in data['chart'] and data['chart']['error']:
+            return [{"error": f"Yahoo Finance API error: {data['chart']['error']}"}]
+        
+        chart = data['chart']['result'][0]
+        timestamps = chart.get('timestamp', [])
+        if not timestamps:
+            if period == "1D":
+                return [{"error": "Intraday data unavailable (markets may be closed)."}]
             return [{"error": f"No {period} data available for {symbol}."}]
 
-        data = data.reset_index()
-        if period == "1D":
-            history = [
-                {
-                    'timestamp': int(row['Datetime'].timestamp()),
-                    'close': row['Close']
-                }
-                for _, row in data.iterrows()
-                if not pd.isna(row['Close'])
-            ]
-        else:
-            history = [
-                {
-                    'timestamp': int(row['Date'].timestamp()),
-                    'close': row['Close']
-                }
-                for _, row in data.iterrows()
-                if not pd.isna(row['Close'])
-            ]
-
+        closes = chart['indicators']['quote'][0]['close']
+        history = []
+        for ts, close in zip(timestamps, closes):
+            if close is not None:
+                dt = datetime.utcfromtimestamp(ts)
+                # For intraday (1D), only include data up to the current time if market is open
+                if period == "1D" and is_market_open() and dt > datetime.utcnow():
+                    continue
+                history.append({
+                    'date': dt.strftime('%Y-%m-%d %H:%M:%S' if interval == "1m" else '%Y-%m-%d'),
+                    'close': close
+                })
         if not history:
             return [{"error": f"No valid {period} data points for {symbol}."}]
         return history
     except Exception as e:
-        logger.error(f"Error fetching {period} history for {symbol}: {str(e)}")
+        logger.error(f"Error processing {period} history for {symbol}: {str(e)} - Response: {data}")
         return [{"error": f"Error processing {period} data for {symbol}: {str(e)}"}]
 
 def get_stock_info(symbol):
@@ -724,17 +728,27 @@ def get_stock_info(symbol):
     time.sleep(random.uniform(0.5, 1.5))  # Randomized delay to avoid rate limiting
     
     try:
-        stock = yf.Ticker(symbol)
-        info = stock.info
-        return {
-            "symbol": symbol,
-            "name": info.get('shortName', symbol),
-            "current_price": info.get('regularMarketPrice', None),
-            "sector": info.get('sector', SECTOR_MAPPING.get(symbol, "Unknown")),
-            "industry": info.get('industry', "Unknown"),
-            "market_cap": info.get('marketCap', None),
-            "pe_ratio": info.get('trailingPE', None)
+        url = f"https://query1.finance.yahoo.com/v7/finance/quote?symbols={symbol}"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
         }
+        
+        response = requests.get(url, headers=headers, timeout=15)
+        data = response.json()
+        
+        if 'quoteResponse' in data and 'result' in data['quoteResponse'] and len(data['quoteResponse']['result']) > 0:
+            quote = data['quoteResponse']['result'][0]
+            return {
+                "symbol": symbol,
+                "name": quote.get('shortName', symbol),
+                "current_price": quote.get('regularMarketPrice', None),
+                "sector": quote.get('sector', SECTOR_MAPPING.get(symbol, "Unknown")),
+                "industry": quote.get('industry', "Unknown"),
+                "market_cap": quote.get('marketCap', None),
+                "pe_ratio": quote.get('trailingPE', None)
+            }
+        else:
+            return get_stock_info_by_scraping(symbol)
     except Exception as e:
         logger.error(f"Error fetching info for {symbol}: {str(e)}")
         return get_stock_info_by_scraping(symbol)
@@ -747,7 +761,7 @@ def get_stock_info_by_scraping(symbol):
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
         }
         
-        response = requests.get(url, headers=headers, timeout=15)
+        response = requests.get(url, headers=headers, timeout=15)  # Fixed: Removed the extra '15'
         
         price = None
         name = symbol
@@ -798,20 +812,34 @@ def get_historical_data(symbol, days=14):
     time.sleep(random.uniform(0.5, 1.5))  # Randomized delay to avoid rate limiting
     
     try:
-        stock = yf.Ticker(symbol)
-        data = stock.history(period=f"{days}d", interval='1d')
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=days)
         
-        if data.empty:
+        start_timestamp = int(start_date.timestamp())
+        end_timestamp = int(end_date.timestamp())
+        
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?period1={start_timestamp}&period2={end_timestamp}&interval=1d"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+        }
+        
+        response = requests.get(url, headers=headers, timeout=15)
+        data = response.json()
+        
+        if "chart" not in data or "result" not in data["chart"] or not data["chart"]["result"]:
             return calculate_fallback_data(symbol)
         
-        timestamps = data.index
-        close_prices = data['Close'].tolist()
-        volumes = data['Volume'].tolist()
+        result = data["chart"]["result"][0]
+        
+        timestamps = result["timestamp"]
+        quotes = result["indicators"]["quote"][0]
+        close_prices = quotes["close"]
+        volumes = quotes.get("volume", [])
         
         valid_data = []
         for i in range(len(timestamps)):
-            price = close_prices[i] if i < len(close_prices) and not pd.isna(close_prices[i]) else None
-            volume = volumes[i] if i < len(volumes) and not pd.isna(volumes[i]) else None
+            price = close_prices[i] if i < len(close_prices) else None
+            volume = volumes[i] if i < len(volumes) else None
             if price is not None:
                 valid_data.append((timestamps[i], price, volume))
         
@@ -939,7 +967,6 @@ def calculate_macd(prices):
         return f"Bearish ({macd:.2f})"
     else:
         return f"Neutral ({macd:.2f})"
-
 def analyze_volume(volumes):
     """Analyze trading volume trend"""
     if not volumes or len(volumes) < 5:
@@ -973,22 +1000,20 @@ def analyze_volume(volumes):
         return "Stable"
 
 def get_news_sentiment(symbol):
-    """Get news sentiment for a symbol by analyzing recent news headlines"""
+    """Get news sentiment for a symbol"""
     try:
         url = f"https://query1.finance.yahoo.com/v1/finance/search?q={symbol}"
         headers = {"User-Agent": "Mozilla/5.0"}
-        response = requests.get(url, headers=headers, timeout=15)
+        response = requests.get(url, headers=headers, timeout=15)  # Added timeout
         data = response.json()
 
-        articles = data.get("news", [])[:5]
-        texts = [a.get("title", "") for a in articles]
+        articles = data.get("quotes", [])[:5]
+        texts = [a.get("shortname", "") for a in articles]
         full_text = " ".join(texts)
 
         if full_text:
             score = TextBlob(full_text).sentiment.polarity
-            logger.info(f"Sentiment for {symbol}: {score:.2f} based on {len(articles)} articles")
             return score
-        logger.warning(f"No news articles found for {symbol}")
         return 0
     except Exception as e:
         logger.warning(f"News sentiment error for {symbol}: {e}")
@@ -1007,7 +1032,7 @@ def analyze_stock(symbol):
         info = get_stock_info(symbol)
         history = get_historical_data(symbol)
         news_sentiment = get_news_sentiment(symbol)
-        history_1d = get_price_history(symbol, "1D")
+        history_1d = get_price_history(symbol, "1D")  # Fetch intraday data
 
         current_price = history.get("current_price") or info.get("current_price")
         percent_change = safe_float(history.get("percent_change_2w", 0))
@@ -1130,7 +1155,8 @@ def index():
 def api_stocks():
     """Get stock data - first try cache, then live data"""
     try:
-        cache_duration = 300 if is_market_open() else 1800
+        # During market hours, reduce cache duration to 5 minutes for fresher data
+        cache_duration = 300 if is_market_open() else 1800  # 5 minutes during market hours, 30 minutes otherwise
         if os.path.exists('data/stock_analysis.json'):
             with open('data/stock_analysis.json', 'r') as f:
                 data = json.load(f)
@@ -1152,7 +1178,7 @@ def api_stock_history(symbol, period):
         return jsonify(history)
     except Exception as e:
         logger.error(f"Error fetching history for {symbol} ({period}): {str(e)}")
-        return jsonify([]), 200  # Return empty array to allow front-end fallback
+        return jsonify([{"error": f"Error fetching {period} history: {str(e)}"}]), 500
 
 @app.route('/api/refresh', methods=['POST'])
 def api_refresh():
@@ -1195,31 +1221,38 @@ def predict():
 def live_prediction(symbol):
     """Get a live prediction for a specific stock based on the latest intraday data"""
     try:
+        # Fetch the latest intraday data
         history_1d = get_price_history(symbol, "1D")
         if not history_1d or ('error' in history_1d[0] and history_1d[0]['error']):
             return jsonify({"error": "Insufficient intraday data for prediction"}), 400
 
+        # Fetch current stock info
         info = get_stock_info(symbol)
         news_sentiment = get_news_sentiment(symbol)
 
+        # Extract prices from intraday data
         prices = [entry['close'] for entry in history_1d if 'close' in entry]
         if not prices:
             return jsonify({"error": "No valid price data available for prediction"}), 400
 
         current_price = prices[-1] if prices else info.get("current_price", 100.0)
 
+        # Compute technical indicators
         rsi = calculate_rsi(prices)
         macd = calculate_macd(prices)
 
+        # Compute percent change and volatility
         start_price = prices[0]
         percent_change = ((current_price - start_price) / start_price) * 100 if start_price else 0
         daily_returns = [(prices[i] - prices[i-1]) / prices[i-1] * 100 for i in range(1, len(prices))]
         volatility = (sum([(ret - (sum(daily_returns)/len(daily_returns)))**2 for ret in daily_returns]) / len(daily_returns))**0.5 if daily_returns else 5
 
+        # Extract features for prediction
         rsi_value = safe_float(rsi.split("(")[-1].replace(")", ""), default=50)
         macd_value = safe_float(macd.split("(")[-1].replace(")", ""), default=0)
-        volume_score = 1 if len(prices) > 10 and prices[-1] > prices[-2] else 0
+        volume_score = 1 if len(prices) > 10 and prices[-1] > prices[-2] else 0  # Simplified volume trend
 
+        # Make prediction
         features = np.array([[rsi_value, macd_value, volume_score, percent_change, volatility]])
         pred = model.predict(features)[0]
         recommendation = label_encoder.inverse_transform([pred])[0]
