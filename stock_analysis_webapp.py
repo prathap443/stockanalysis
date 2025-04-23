@@ -650,10 +650,28 @@ def fetch_yahoo_finance_data(symbol, start, end, interval, retries=3):
 
 def get_price_history(symbol, period):
     """Get price history for a specific period (1D, 1W, 1M, or 14D)"""
-    end = int(time.time())
-    interval = "1d"  # Default interval
-    start = end
+    now = datetime.utcnow()
+    end_dt = now.replace(minute=0, second=0, microsecond=0)
+    
+    if period == "1D":
+        # Get data for current/last trading day
+        if is_market_open():
+            start_dt = end_dt - timedelta(days=1)
+        else:
+            start_dt = get_last_trading_day(end_dt)
+        interval = "1m"
+    elif period == "1W":
+        start_dt = end_dt - timedelta(weeks=1)
+        interval = "1d"
+    elif period == "1M":
+        start_dt = end_dt - timedelta(days=30)
+        interval = "1d"
+    else:
+        start_dt = end_dt - timedelta(days=14)
+        interval = "1d"
 
+    start = int(start_dt.timestamp())
+    end = int(end_dt.timestamp())
     if period == "1D":
         if is_market_open():
             start = end - 60*60*24*1  # 1 day
