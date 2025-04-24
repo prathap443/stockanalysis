@@ -335,50 +335,50 @@ html_template = """
       document.getElementById("sellCount").innerText = summary.SELL || 0;
     }
 
-    function renderStocks(stocks) {
-      let html = '';
-      stocks.forEach((stock, i) => {
-        const trendColor = stock.percent_change_2w >= 0 ? 'text-success' : 'text-danger';
-        const trendIcon = stock.percent_change_2w >= 0 ? '↑' : '↓';
-        const chartId = `chart-${i}`;
-        const buttonGroupId = `timePeriod-${i}`;
-        html += `
-          <div class="col-md-6 col-lg-4">
-            <div class="stock-card">
-              <div class="mb-2 d-flex justify-content-between">
-                <div>
-                  <h5>${stock.symbol}</h5>
-                  <small class="text-muted">Yahoo Finance</small><br/>
-                  <strong>$${stock.current_price?.toFixed(2) || 'N/A'}</strong><br/>
-                  <span class="text-muted small">Sentiment: ${stock.news_sentiment !== undefined ? stock.news_sentiment.toFixed(3) : 'N/A'}</span>
-                </div>
-                <div class="text-end ${trendColor}">
-                  <strong>${trendIcon}${stock.percent_change_2w.toFixed(2)}%</strong><br/>
-                  <small>${stock.recommendation}</small>
-                </div>
-              </div>
-              <div class="btn-group btn-group-sm mb-2" role="group" id="${buttonGroupId}">
-                <button type="button" class="btn btn-outline-secondary time-period-btn" onclick="updateChart('${stock.symbol}', '1D', ${i}, this)">1D</button>
-                <button type="button" class="btn btn-outline-secondary time-period-btn expand-icon" onclick="expandChart('${stock.symbol}', ${i})">🔍</button>
-                <button type="button" class="btn btn-outline-secondary time-period-btn" onclick="updateChart('${stock.symbol}', '1W', ${i}, this)">1W</button>
-                <button type="button" class="btn btn-outline-secondary time-period-btn" onclick="updateChart('${stock.symbol}', '1M', ${i}, this)">1M</button>
-              </div>
-              <div id="chartContainer-${i}">
-                <canvas id="${chartId}" height="100"></canvas>
-              </div>
-              <div class="mt-2">
-                <button class="btn btn-sm btn-info" onclick="getLivePrediction('${stock.symbol}', ${i})">Get Live Prediction</button>
-                <div id="livePrediction-${i}" class="small mt-1"></div>
-              </div>
+function renderStocks(stocks) {
+  let html = '';
+  stocks.forEach((stock, i) => {
+    const trendColor = stock.percent_change_2w >= 0 ? 'text-success' : 'text-danger';
+    const trendIcon = stock.percent_change_2w >= 0 ? '↑' : '↓';
+    const chartId = `chart-${i}`;
+    const buttonGroupId = `timePeriod-${i}`;
+    html += `
+      <div class="col-md-6 col-lg-4">
+        <div class="stock-card">
+          <div class="mb-2 d-flex justify-content-between">
+            <div>
+              <h5>${stock.symbol}</h5>
+              <small class="text-muted">Yahoo Finance</small><br/>
+              <strong>$${stock.current_price?.toFixed(2) || 'N/A'}</strong><br/>
+              <span class="text-muted small">Sentiment: ${stock.news_sentiment !== undefined ? stock.news_sentiment.toFixed(3) : 'N/A'}</span>
             </div>
-          </div>`;
-      });
-      document.getElementById("dashboardContent").innerHTML = html;
-      stocks.forEach((stock, i) => {
-        const period = selectedTimePeriods[stock.symbol] || '1D'; // Default to 1D for intraday
-        updateChart(stock.symbol, period, i);
-      });
-    }
+            <div class="text-end ${trendColor}">
+              <strong>${trendIcon}${stock.percent_change_2w.toFixed(2)}%</strong><br/>
+              <small>${stock.recommendation}</small>
+            </div>
+          </div>
+          <div class="btn-group btn-group-sm mb-2" role="group" id="${buttonGroupId}">
+            <button type="button" class="btn btn-outline-secondary time-period-btn" onclick="updateChart('${stock.symbol}', '1D', ${i}, this)">1D</button>
+            <button type="button" class="btn btn-outline-secondary time-period-btn expand-icon" onclick="expandChart('${stock.symbol}', ${i})">🔍</button>
+            <button type="button" class="btn btn-outline-secondary time-period-btn" onclick="updateChart('${stock.symbol}', '1W', ${i}, this)">1W</button>
+            <button type="button" class="btn btn-outline-secondary time-period-btn" onclick="updateChart('${stock.symbol}', '1M', ${i}, this)">1M</button>
+          </div>
+          <div id="chartContainer-${i}">
+            <canvas id="${chartId}" height="100"></canvas>
+          </div>
+          <div class="mt-2">
+            <button class="btn btn-sm btn-info" onclick="getLivePrediction('${stock.symbol}', ${i})">Get Live Prediction</button>
+            <div id="livePrediction-${i}" class="small mt-1"></div>
+          </div>
+        </div>
+      </div>`;
+  });
+  document.getElementById("dashboardContent").innerHTML = html;
+  stocks.forEach((stock, i) => {
+    const period = selectedTimePeriods[stock.symbol] || '14D'; // Default to 14D to match 14-day trend
+    updateChart(stock.symbol, period, i);
+  });
+}
 
     async function updateChart(symbol, period, index, button) {
       try {
@@ -695,72 +695,50 @@ def get_price_history(symbol, period):
     end_dt = now.replace(minute=0, second=0, microsecond=0)
     
     if period == "1D":
-        # Get data for current/last trading day
+        # Determine the correct day for intraday data
+        last_trading_day = get_last_trading_day(end_dt)
+        
+        # Set the time range for the last trading day (9:30 AM to 4:00 PM EST)
+        est_offset = timedelta(hours=-5)
+        start_dt = last_trading_day.replace(hour=14, minute=30, second=0, microsecond=0)  # 9:30 AM EST (14:30 UTC)
+        end_dt = last_trading_day.replace(hour=21, minute=0, second=0, microsecond=0)  # 4:00 PM EST (21:00 UTC)
+        interval = "1m"  # 1-minute intervals for intraday
+        
+        # If the market is open, adjust the end time to the current time
         if is_market_open():
-            start_dt = end_dt - timedelta(days=1)
-        else:
-            start_dt = get_last_trading_day(end_dt)
-        interval = "1m"
+            start_dt = end_dt - timedelta(days=1)  # Start from the previous day
+            end_dt = now  # Up to the current time
+            interval = "1m"
+            
     elif period == "1W":
         start_dt = end_dt - timedelta(weeks=1)
         interval = "1d"
     elif period == "1M":
         start_dt = end_dt - timedelta(days=30)
         interval = "1d"
-    else:
+    else:  # Default to 14 days
         start_dt = end_dt - timedelta(days=14)
         interval = "1d"
 
     start = int(start_dt.timestamp())
     end = int(end_dt.timestamp())
-    if period == "1D":
-        if is_market_open():
-            start = end - 60*60*24*1  # 1 day
-            interval = "1m"  # 1-minute intervals for intraday
-        else:
-            # After market hours, fetch the current day's data (if today is a trading day)
-            now = datetime.utcnow()
-            est_offset = timedelta(hours=-5)
-            est_time = now + est_offset
-            
-            # Determine the last trading day
-            last_trading_day = now
-            if est_time.weekday() == 5:  # Saturday
-                last_trading_day -= timedelta(days=1)  # Go back to Friday
-            elif est_time.weekday() == 6:  # Sunday
-                last_trading_day -= timedelta(days=2)  # Go back to Friday
-            elif est_time.weekday() == 0 and est_time.hour < 9:  # Monday before market open
-                last_trading_day -= timedelta(days=3)  # Go back to Friday
-            
-            # Set the time range for the last trading day (9:30 AM to 4:00 PM EST)
-            start_dt = last_trading_day.replace(hour=14, minute=30, second=0, microsecond=0)  # 9:30 AM EST (14:30 UTC)
-            end_dt = last_trading_day.replace(hour=21, minute=0, second=0, microsecond=0)  # 4:00 PM EST (21:00 UTC)
-            start = int(start_dt.timestamp())
-            end = int(end_dt.timestamp())
-            interval = "1m"
-    elif period == "1W":
-        start = end - 60*60*24*7  # 7 days
-        interval = "1d"
-    elif period == "1M":
-        start = end - 60*60*24*30  # 30 days
-        interval = "1d"
-    else:  # Default to 14 days
-        start = end - 60*60*24*14
-        interval = "1d"
     
+    # Fetch the data
     data = fetch_yahoo_finance_data(symbol, start, end, interval)
-    if not data:
-        return [{"error": f"Unable to fetch {period} data for {symbol} after multiple attempts."}]
-
+    if not data or ('error' in data['chart'] and data['chart']['error']):
+        # If intraday data fails, fall back to daily data for the last trading day
+        if period == "1D":
+            start_dt = last_trading_day - timedelta(days=1)
+            start = int(start_dt.timestamp())
+            interval = "1d"  # Fall back to daily data
+            data = fetch_yahoo_finance_data(symbol, start, end, interval)
+            if not data or ('error' in data['chart'] and data['chart']['error']):
+                return [{"error": f"Unable to fetch {period} data for {symbol} after multiple attempts."}]
+    
     try:
-        if 'error' in data['chart'] and data['chart']['error']:
-            return [{"error": f"Yahoo Finance API error: {data['chart']['error']}"}]
-        
         chart = data['chart']['result'][0]
         timestamps = chart.get('timestamp', [])
         if not timestamps:
-            if period == "1D":
-                return [{"error": "Intraday data unavailable (markets may be closed)."}]
             return [{"error": f"No {period} data available for {symbol}."}]
 
         closes = chart['indicators']['quote'][0]['close']
@@ -768,7 +746,7 @@ def get_price_history(symbol, period):
         for ts, close in zip(timestamps, closes):
             if close is not None:
                 dt = datetime.utcfromtimestamp(ts)
-                # For intraday (1D), only include data up to the current time if market is open
+                # For intraday, only include data up to the current time if market is open
                 if period == "1D" and is_market_open() and dt > datetime.utcnow():
                     continue
                 history.append({
