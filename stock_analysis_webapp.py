@@ -13,6 +13,10 @@ import pandas as pd
 from textblob import TextBlob  # For basic sentiment analysis
 import ta  # For technical indicators (RSI, MACD, etc.)
 
+)
+)
+
+
 # Load pre-trained model and label encoder
 model = joblib.load("stock_predictor.pkl")
 label_encoder = joblib.load("label_encoder.pkl")
@@ -1447,4 +1451,4 @@ if __name__ == "__main__":
             logger.error(f"Initial analysis error: {str(e)}")
     port = int(os.getenv("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
-    )
+    
