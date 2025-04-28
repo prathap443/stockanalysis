@@ -44,3 +44,4 @@ refresh_thread.start()
 # This is what Gunicorn imports
 if __name__ == "__main__":  # Fixed: Added __ around name and main
     app.run()
+    )
