@@ -1447,3 +1447,4 @@ if __name__ == "__main__":
             logger.error(f"Initial analysis error: {str(e)}")
     port = int(os.getenv("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
+    )
